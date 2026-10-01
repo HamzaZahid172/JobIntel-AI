@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from pypdf import PdfReader
 
-from .db import Base, engine, SessionLocal, get_db
+from .db import Base, engine, SessionLocal, get_db, wait_for_database
 from .models import Job, Application
 from .schemas import ApplicationCreate, ApplicationUpdate, ApplicationOut, MatchRequest, AssistantRequest
 from .intelligence import ats_check, match_cv_to_job, aggregate_skills, improvement_suggestions
