@@ -239,6 +239,7 @@ def build_match_report(
             "location": location_score,
         },
         "requirements": requirements,
+        "job_skills": sorted(required | preferred),
         "matched_skills": sorted((required | preferred) & cv_skills),
         "missing_skills": sorted((required | preferred) - cv_skills),
         "matched_required_skills": matched_required,
