@@ -103,3 +103,19 @@ class CollectorTarget(Base):
     label: Mapped[str] = mapped_column(String(180))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ApplicationPackage(Base):
+    __tablename__ = "application_packages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    live_job_id: Mapped[int] = mapped_column(Integer, index=True)
+    cv_profile_id: Mapped[int] = mapped_column(Integer, index=True)
+    status: Mapped[str] = mapped_column(String(40), default="Needs Review")
+    match_score: Mapped[float] = mapped_column(Float, default=0)
+    cover_letter_text: Mapped[str] = mapped_column(Text, default="")
+    cover_letter_generator: Mapped[str] = mapped_column(String(40), default="template")
+    package_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
