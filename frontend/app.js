@@ -105,7 +105,6 @@ async function load() {
         <small>${esc(m.company)} · ${esc(m.location)}</small>
         <div>${skills}${roles}<span class="sourceTag">${esc(m.source)}</span></div>
         ${m.url ? `<a class="applyBtn" href="${esc(m.url)}" target="_blank" rel="noopener">Apply on source ↗</a>` : ''}
-        <button class="secondary coverLetterBtn" data-job-id="${m.id}">Create cover letter</button>
       </div>
       ${score}
     </div>`;
@@ -197,7 +196,6 @@ async function load() {
 
   document.querySelector('#addApp').onclick = () => document.querySelector('#modal').classList.remove('hidden');
   document.querySelector('#uploadCv').onclick = uploadCv;
-  bindTrackButtons();
 }
 
 async function uploadCv() {
@@ -399,6 +397,7 @@ function jobCard(job, compact){
     (!compact && missing.length ? '<p class="missingLine"><b>Missing:</b> ' + missing.map(esc).join(', ') + '</p>' : '') +
     '<div class="jobActions">' +
       (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
+      '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
 }
@@ -410,6 +409,59 @@ function bindTrackButtons(){
       if(job) openApplicationModal(job);
     };
   });
+
+  document.querySelectorAll('.coverLetterBtn').forEach(function(button){
+    button.onclick = function(){
+      downloadCoverLetter(button.dataset.jobId, button);
+    };
+  });
+}
+
+async function downloadCoverLetter(jobId, button){
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Generating cover letter…';
+
+  try{
+    const token = localStorage.getItem('jobintel_token');
+    const response = await fetch(API + '/api/jobs/' + jobId + '/cover-letter.docx', {
+      method: 'POST',
+      headers: {
+        Authorization: 'Bearer ' + token
+      }
+    });
+
+    if(!response.ok){
+      let message = 'Cover letter generation failed.';
+      try{
+        const body = await response.json();
+        message = body.detail || body.message || message;
+      }catch{}
+      throw new Error(message);
+    }
+
+    const blob = await response.blob();
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = filenameMatch ? filenameMatch[1] : 'JobIntel_Cover_Letter.docx';
+
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(function(){ URL.revokeObjectURL(downloadUrl); }, 1000);
+    button.textContent = 'Downloaded ✓';
+    setTimeout(function(){ button.textContent = originalText; }, 1600);
+  }catch(err){
+    alert('Cover letter could not be created: ' + err.message);
+    button.textContent = originalText;
+  }finally{
+    button.disabled = false;
+  }
 }
 
 function openApplicationModal(job){
