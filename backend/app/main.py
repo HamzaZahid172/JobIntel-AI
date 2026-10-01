@@ -15,6 +15,7 @@ from .assistant import answer
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    wait_for_database()
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
     try: seed(db)
