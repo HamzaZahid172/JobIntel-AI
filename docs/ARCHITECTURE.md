@@ -2,8 +2,6 @@
 
 ## 1. Product runtime
 
-The default local runtime is intentionally free and laptop-friendly:
-
 ```text
 Browser
    ↓
@@ -12,29 +10,30 @@ Nginx static frontend (HTML/CSS/JavaScript)
 FastAPI API
    ├── authentication/profile
    ├── CV parsing + ATS Readiness
-   ├── CV-first job matching
+   ├── source/collector orchestration
+   ├── Match Layer
+   ├── Application Preparation Layer
    ├── application CRM
    ├── cover-letter generation
-   ├── Career Assistant
-   └── source/collector orchestration
+   └── Career Assistant
    ↓
 PostgreSQL
 ```
 
-Ollama runs as a local Docker service. JobIntel uses it when the configured model is ready and falls back to deterministic logic for supported workflows when the model is unavailable.
+Ollama runs locally in Docker. JobIntel uses it when the configured model is ready and falls back to deterministic logic for supported workflows when it is unavailable.
 
-## 2. Job acquisition layer
+## 2. Collection Layer
 
-All sources are normalized into one `live_jobs` schema before matching.
+All sources are normalized into the same `live_jobs` model before matching.
 
 ```text
-Arbeitnow public API ───────────────┐
-Jobicy public API ──────────────────┤
-Lever public employer postings ─────┤
-SmartRecruiters public postings ────┤
+Arbeitnow ──────────────────────────┐
+Jobicy ─────────────────────────────┤
+Lever employer postings ────────────┤
+SmartRecruiters postings ───────────┤
 Ashby public Job Postings API ──────┤
 Authorized external collector ──────┤
-Manual job import ──────────────────┤
+Manual / bulk import ────────────────┤
                                     ↓
                               normalization
                                     ↓
@@ -43,7 +42,7 @@ Manual job import ──────────────────┤
                               PostgreSQL
 ```
 
-Configured employer ATS collectors are user-controlled in **Settings**. A target consists of a provider, a company/job-board identifier, a display label and an enabled state.
+Configured employer ATS collectors are managed from **Settings**.
 
 Current direct ATS providers:
 
@@ -52,99 +51,113 @@ Current direct ATS providers:
 - SmartRecruiters
 - Ashby
 
-For Ashby, the identifier is the final path component of the company's hosted job board, for example `CompanyName` from `https://jobs.ashbyhq.com/CompanyName`.
+XING and StepStone remain authorized/manual-import sources rather than default automated collectors.
 
-XING and StepStone are not default automated collectors. Jobs from restricted platforms should enter through an authorized integration or the manual/bulk-import bridge.
+## 3. Match Layer
 
-## 3. Career intelligence layer
+The Match Layer lives in `backend/app/match_layer.py`.
 
 ```text
 uploaded CV
-   ↓
-text extraction
-   ↓
-ATS Readiness + CV skill profile + role families
-   ↓
-normalized current jobs
-   ↓
-role relevance + skill overlap + experience/language signals
-   ↓
-CV-relevant jobs
-   ↓
-matches / skill gaps / recommendations / analytics
+    +
+normalized job
+    ↓
+requirement extraction
+    ├── required skills
+    ├── preferred skills
+    ├── role family
+    ├── explicit experience requirement
+    ├── explicit language requirement
+    └── location / remote signal
+    ↓
+explainable score
 ```
 
-ATS Readiness is a structural/readability heuristic, not a universal ATS certification.
-
-## 4. Application preparation
-
-For a selected job:
+Current score weights:
 
 ```text
-CV + exact stored job description
-        ↓
-matched/missing skills
-        ↓
-local Ollama when available
-        or grounded deterministic fallback
-        ↓
-tailored cover letter
-        ↓
-DOCX download
+Role alignment          30%
+Required skills         30%
+Preferred skills        10%
+Experience              15%
+Language                10%
+Location                 5%
 ```
 
-Application status remains user-owned in the CRM.
+The report includes matched/missing required skills, preferred skills, hard blockers, reasons and an `eligible_for_preparation` decision.
 
-## 5. Intelligent Application Engine architecture
+The score is decision support. It is not an interview probability.
 
-The next application-automation stage is deliberately approval-first:
+API:
 
-```text
-Job acquisition
-      ↓
-CV match + hard filters
-      ↓
-Ready-to-Apply queue
-      ↓
-prepare package
-  ├── selected CV
-  ├── cover letter
-  ├── screening answers
-  └── source/application URL
-      ↓
-human review + approve
-      ↓
-provider adapter
-  ├── official ATS application API where authorized
-  └── employer-site browser adapter where permitted
-      ↓
-submission receipt/result
-      ↓
-application CRM → Applied
+```http
+GET /api/jobs/{job_id}/match-report
 ```
 
-### Hard filters before a job can enter Ready-to-Apply
+## 4. Application Preparation Layer
 
-A high match score alone is not enough. The future queue should also validate:
-
-- target role family
-- Germany / accepted remote-EU location
-- language requirements
-- employment type
-- work authorization / relocation constraints when known
-- user-defined salary constraints when known
-- required screening answers
-- duplicate-application prevention
-
-### Automation states
+The preparation layer lives in `backend/app/application_preparation.py` and persists snapshots in the `application_packages` table.
 
 ```text
-Discovered
-→ Matched
-→ Ready to Prepare
+selected job
+    +
+latest CV
+    +
+Match Layer report
+    ↓
+cover letter
+    +
+safe screening-answer drafts
+    +
+validation checks
+    ↓
+ApplicationPackage
+    ↓
+Application Prep page
+```
+
+Prepared automatically:
+
+- exact job/company/source/application URL snapshot
+- CV profile reference
+- structured match report
+- CV-grounded cover letter
+- draft answers for role motivation and relevant experience
+- validation against the chosen minimum match
+
+Deliberately requires user input when the app cannot safely know the answer:
+
+- work authorization / visa
+- salary expectation
+- start date / notice period
+- language level when not evidenced in the CV
+
+Package states:
+
+```text
+Needs Review
+→ user completes unresolved fields
 → Package Ready
-→ Awaiting Approval
-→ Submitting
+```
+
+"Package Ready" means preparation is complete. It does not mean submission occurred.
+
+APIs:
+
+```http
+POST  /api/jobs/{job_id}/prepare-application
+GET   /api/application-packages
+GET   /api/application-packages/{package_id}
+PATCH /api/application-packages/{package_id}/answers
+POST  /api/application-packages/{package_id}/cover-letter
+```
+
+## 5. Application CRM
+
+The CRM remains the source of truth for actual outcomes:
+
+```text
+Saved
 → Applied
 → Screening
 → Interview
@@ -152,11 +165,31 @@ Discovered
 → Offer / Rejected
 ```
 
-No production workflow should silently treat a heuristic 90% score as permission to submit an application. The first automation version should prepare everything automatically but require a final user approval before submission.
+A package is separate from an actual submitted application.
 
-## 6. Advanced data path
+## 6. Future Submission Layer
 
-The optional data profile remains available for experimentation:
+The next stage remains approval-first:
+
+```text
+Package Ready
+      ↓
+human review + approve
+      ↓
+provider adapter
+  ├── authorized ATS application API
+  └── permitted employer-site browser adapter
+      ↓
+confirmed submission result
+      ↓
+Application CRM → Applied
+```
+
+The system should never treat a heuristic match threshold alone as permission to submit an application.
+
+## 7. Advanced data path
+
+Optional data-engineering services remain available:
 
 ```text
 collectors
@@ -174,18 +207,24 @@ ClickHouse
 market/application analytics
 ```
 
-Start optional data services with:
+Start them with:
 
 ```bash
 docker compose --profile data up --build
 ```
 
-## 7. Product principles
+## 8. Product principles
 
 - No paid API keys required for the core local workflow.
 - Prefer public/authorized source interfaces over brittle scraping.
-- Keep acquisition adapters separate from matching/business logic.
+- Keep collection, matching, preparation and submission as separate layers.
 - Keep CV/application data local by default.
-- Explain match reasons instead of only showing a score.
-- Preserve human approval for application submission until provider-specific automation is proven reliable.
-- Never present interview-readiness heuristics as a real probability without sufficient labelled outcomes.
+- Expose score reasons rather than only a percentage.
+- Never invent personal screening answers.
+- Preserve human approval before actual submission until provider-specific automation is proven reliable.
+
+See also:
+
+- `docs/DATA_SOURCES.md`
+- `docs/MATCH_AND_PREPARATION.md`
+- `docs/APPLICATION_AUTOMATION_ARCHITECTURE.md`
