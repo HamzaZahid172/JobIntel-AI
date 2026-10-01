@@ -10,8 +10,20 @@ Used through its public job-board API. JobIntel stores relevant technical jobs i
 ### Jobicy
 Used through its public remote-jobs API with Germany filtering.
 
-### Manual import
-The Job Market page supports manual import of a job title, company, URL and description. This is the safe fallback for individual jobs found on platforms that do not provide us with authorized search-data access.
+### Direct employer ATS collectors
+
+Configured in **Settings** and fetched during **Refresh Current Jobs**:
+
+- Lever
+- Lever EU
+- SmartRecruiters
+- Ashby
+
+Ashby uses the public Job Postings API. The configured identifier is the final path component of an Ashby hosted job board, for example `Ashby` from `https://jobs.ashbyhq.com/Ashby`.
+
+### Manual / bulk import
+
+The Job Market page supports manual import of a job title, company, URL and description. External collectors can also send normalized jobs through `POST /api/jobs/bulk-import`. This is the fallback for sources where JobIntel does not have an authorized/public collector.
 
 ## XING
 
@@ -47,8 +59,9 @@ Reference:
 Instead of relying on XING/StepStone scraping, add adapters for employer career systems where public job feeds/endpoints are available, for example:
 
 - Greenhouse
-- Lever
-- SmartRecruiters
+- Lever ✅
+- SmartRecruiters ✅
+- Ashby ✅
 - Teamtailor
 - Workday public career pages where an allowed feed/interface is available
 - direct company career-site feeds
