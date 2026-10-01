@@ -20,6 +20,13 @@ GERMANY_HINTS = (
 
 REMOTE_EU_HINTS = ("remote", "europe", "eu", "emea", "cet", "cest")
 
+PROVIDER_SOURCE = {
+    "lever": "Lever",
+    "lever-eu": "Lever",
+    "smartrecruiters": "SmartRecruiters",
+    "ashby": "Ashby",
+}
+
 
 def _germany_or_remote_eu(location: str, remote: bool = False, country: str = "") -> bool:
     loc = (location or "").lower()
@@ -129,6 +136,79 @@ def fetch_smartrecruiters(client: httpx.Client, target: CollectorTarget) -> list
     return jobs
 
 
+def _ashby_location(item: dict) -> tuple[str, str]:
+    primary = item.get("location") or ""
+    secondary = [
+        row.get("location") or ""
+        for row in (item.get("secondaryLocations") or [])
+        if row.get("location")
+    ]
+    all_locations = [primary, *secondary]
+    location = " · ".join(dict.fromkeys(x for x in all_locations if x)) or "Unknown"
+
+    postal = ((item.get("address") or {}).get("postalAddress") or {})
+    country = postal.get("addressCountry") or ""
+    if not country:
+        for row in item.get("secondaryLocations") or []:
+            country = ((row.get("address") or {}).get("addressCountry") or "")
+            if country:
+                break
+    return location, country
+
+
+def fetch_ashby(client: httpx.Client, target: CollectorTarget) -> list[dict]:
+    response = client.get(
+        f"https://api.ashbyhq.com/posting-api/job-board/{target.identifier}",
+        params={"includeCompensation": "false"},
+        headers={"Accept": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    jobs = []
+
+    for item in payload.get("jobs") or []:
+        if item.get("isListed") is False:
+            continue
+
+        title = item.get("title") or ""
+        description = item.get("descriptionPlain") or strip_html(item.get("descriptionHtml"))
+        if not is_target_technical_role(title, description):
+            continue
+
+        location, country = _ashby_location(item)
+        remote = bool(item.get("isRemote")) or (item.get("workplaceType") or "").lower() == "remote"
+        if not _germany_or_remote_eu(location, remote, country):
+            continue
+
+        stable_id = item.get("jobUrl") or item.get("applyUrl") or f"{title}:{location}"
+        jobs.append({
+            "source": "Ashby",
+            "source_id": f"{target.identifier}:{stable_id}",
+            "title": title,
+            "company": target.label,
+            "location": location,
+            "remote": remote,
+            "url": item.get("applyUrl") or item.get("jobUrl") or "",
+            "description": description,
+            "skills": extract_skills(title + " " + description),
+            "job_types": [item.get("employmentType")] if item.get("employmentType") else [],
+            "posted_at": parse_timestamp(item.get("publishedAt")),
+        })
+
+    return jobs
+
+
+def _fetch_target(client: httpx.Client, target: CollectorTarget) -> tuple[str, list[dict]]:
+    provider = target.provider.lower().strip()
+    if provider in {"lever", "lever-eu"}:
+        return "Lever", fetch_lever(client, target)
+    if provider == "smartrecruiters":
+        return "SmartRecruiters", fetch_smartrecruiters(client, target)
+    if provider == "ashby":
+        return "Ashby", fetch_ashby(client, target)
+    raise ValueError(f"Unsupported provider: {target.provider}")
+
+
 def sync_configured_ats(db: Session, user_id: int) -> dict:
     targets = (
         db.query(CollectorTarget)
@@ -138,20 +218,15 @@ def sync_configured_ats(db: Session, user_id: int) -> dict:
     fetched = 0
     errors = []
     target_summaries = []
-    with httpx.Client(timeout=20, follow_redirects=True, headers={"User-Agent": "JobIntelAI/0.5"}) as client:
-        for target in targets:
-            provider = target.provider.lower().strip()
-            try:
-                if provider in {"lever", "lever-eu"}:
-                    jobs = fetch_lever(client, target)
-                    source = "Lever"
-                elif provider == "smartrecruiters":
-                    jobs = fetch_smartrecruiters(client, target)
-                    source = "SmartRecruiters"
-                else:
-                    errors.append(f"{target.label}: unsupported provider {target.provider}")
-                    continue
 
+    with httpx.Client(
+        timeout=20,
+        follow_redirects=True,
+        headers={"User-Agent": "JobIntelAI/0.6"},
+    ) as client:
+        for target in targets:
+            try:
+                source, jobs = _fetch_target(client, target)
                 prefix = f"{target.identifier}:"
                 db.query(LiveJob).filter(
                     LiveJob.source == source,
@@ -175,12 +250,21 @@ def sync_configured_ats(db: Session, user_id: int) -> dict:
                         posted_at=item["posted_at"],
                         fetched_at=now,
                     ))
+
                 db.commit()
                 fetched += len(jobs)
-                target_summaries.append({"target": target.label, "provider": target.provider, "jobs": len(jobs)})
+                target_summaries.append({
+                    "target": target.label,
+                    "provider": target.provider,
+                    "jobs": len(jobs),
+                })
             except Exception as exc:
                 db.rollback()
                 logger.exception("ATS target sync failed: %s", target.label)
                 errors.append(f"{target.label}: {type(exc).__name__}")
 
-    return {"fetched": fetched, "targets": target_summaries, "errors": errors}
+    return {
+        "fetched": fetched,
+        "targets": target_summaries,
+        "errors": errors,
+    }
