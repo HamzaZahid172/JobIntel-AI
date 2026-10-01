@@ -188,3 +188,23 @@ The dashboard then filters current jobs using both **role relevance** and **skil
 The **Your Top Skills + Current Demand** card is CV-first. It shows how strongly a skill appears in the uploaded CV and how often that same skill appears in the current CV-relevant job set.
 
 The ATS score is generic readiness and is capped below 100 by design. Job-specific compatibility is reported separately in the Best Current Matches section.
+
+
+## v0.4 app navigation and login
+
+JobIntel now requires a local account before opening the career workspace. Registration creates a profile and claims any CV/application data from older pre-login local versions.
+
+The sidebar pages are functional:
+
+- **Dashboard** – CV-filtered market overview and Career Assistant.
+- **Job Market** – all CV-relevant jobs, search/filter controls, source links, application tracking and manual job import.
+- **My Applications** – application table with editable pipeline status.
+- **ATS CV Check** – upload/replace the CV and review ATS readiness + strongest skills.
+- **Matches** – current jobs ranked against the CV.
+- **Skill Gap** – repeated missing skills across CV-relevant jobs.
+- **Analytics** – application funnel, source counts and CV-version outcomes.
+- **Settings** – profile, target roles/locations, Ollama status and source strategy.
+
+The Career Assistant reports whether it is using local **Ollama** or the deterministic fallback rules. Configure Ollama in `.env` with `USE_OLLAMA=true`.
+
+See `docs/DATA_SOURCES.md` for the XING/StepStone strategy. JobIntel does not automatically scrape those platforms without authorized access; individual jobs can be imported from the Job Market page.
