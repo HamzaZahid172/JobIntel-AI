@@ -6,8 +6,9 @@ Local-first, zero-paid-service career intelligence platform for Germany-focused 
 
 - High-fidelity responsive dashboard inspired by the approved UI mockup (zero-dependency static frontend for reliable local Docker builds)
 - Manual application tracking and pipeline
+- Persistent Application Preparation packages with safe screening drafts
 - ATS Readiness score and CV parsing endpoint
-- CV-to-job skill matching and explainable gaps
+- Explainable Match Layer: role, required/preferred skills, experience, language and location
 - Improvement suggestions (Kafka, Airflow, Terraform, German, CV targeting)
 - Job matches, skills-in-demand view, performance cards and follow-ups
 - Embedded Career Assistant with local Ollama and deterministic fallback
@@ -245,3 +246,56 @@ Ready-to-Apply queue
 See `docs/APPLICATION_AUTOMATION_ARCHITECTURE.md`.
 
 The existing external collector bridge remains available at `POST /api/jobs/bulk-import`.
+
+
+## v0.7 Match + Application Preparation layers
+
+The CV-to-job flow is now split into explicit production layers.
+
+### Match Layer
+
+Each job receives an explainable score with these dimensions:
+
+```text
+Role alignment          30%
+Required skills         30%
+Preferred skills        10%
+Experience              15%
+Language                10%
+Location                 5%
+```
+
+The report exposes required/preferred skills, matched/missing skills, hard blockers and preparation eligibility.
+
+API:
+
+```text
+GET /api/jobs/{job_id}/match-report
+```
+
+### Application Preparation Layer
+
+Job Market and Matches now include **Prepare application**. Preparation creates a persistent package containing:
+
+- current CV reference
+- exact job snapshot
+- structured match report
+- generated cover letter
+- safe screening-answer drafts
+- validation checks
+- unresolved fields that need real user input
+
+The sidebar now includes **Application Prep**, where those packages can be reviewed, screening answers can be completed and the package-specific cover letter can be downloaded.
+
+JobIntel deliberately does not invent work-authorization, salary, notice-period or unsupported language-proficiency answers.
+
+APIs:
+
+```text
+POST  /api/jobs/{job_id}/prepare-application
+GET   /api/application-packages
+PATCH /api/application-packages/{package_id}/answers
+POST  /api/application-packages/{package_id}/cover-letter
+```
+
+See `docs/MATCH_AND_PREPARATION.md` and `docs/ARCHITECTURE.md`.
