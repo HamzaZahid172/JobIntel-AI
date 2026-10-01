@@ -1,0 +1,8 @@
+name: jobintel_analytics
+version: '1.0'
+config-version: 2
+profile: jobintel
+model-paths: ["models"]
+models:
+  jobintel_analytics:
+    +materialized: view
