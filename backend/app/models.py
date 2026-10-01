@@ -1,10 +1,15 @@
 from datetime import date, datetime
-from sqlalchemy import String, Integer, Date, DateTime, Text, Float
+
+from sqlalchemy import Boolean, Date, DateTime, Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
+
 from .db import Base
 
+
 class Job(Base):
+    """Legacy table kept so existing local volumes remain compatible."""
     __tablename__ = "jobs"
+
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
     company: Mapped[str] = mapped_column(String(160))
@@ -16,15 +21,49 @@ class Job(Base):
     match_score: Mapped[float] = mapped_column(Float, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+
+class LiveJob(Base):
+    __tablename__ = "live_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source: Mapped[str] = mapped_column(String(50), index=True)
+    source_id: Mapped[str] = mapped_column(String(200), index=True)
+    title: Mapped[str] = mapped_column(String(240), index=True)
+    company: Mapped[str] = mapped_column(String(180))
+    location: Mapped[str] = mapped_column(String(180), default="Germany")
+    remote: Mapped[bool] = mapped_column(Boolean, default=False)
+    url: Mapped[str] = mapped_column(String(700))
+    description: Mapped[str] = mapped_column(Text, default="")
+    skills: Mapped[str] = mapped_column(Text, default="")
+    job_types: Mapped[str] = mapped_column(Text, default="")
+    match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    posted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class CVProfile(Base):
+    __tablename__ = "cv_profiles"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    text: Mapped[str] = mapped_column(Text)
+    skills: Mapped[str] = mapped_column(Text, default="")
+    ats_score: Mapped[float] = mapped_column(Float, default=0)
+    ats_status: Mapped[str] = mapped_column(String(80), default="Needs Improvement")
+    ats_json: Mapped[str] = mapped_column(Text, default="{}")
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
 class Application(Base):
     __tablename__ = "applications"
+
     id: Mapped[int] = mapped_column(primary_key=True)
     company: Mapped[str] = mapped_column(String(160))
     role: Mapped[str] = mapped_column(String(200))
     location: Mapped[str] = mapped_column(String(160), default="Germany")
     url: Mapped[str] = mapped_column(String(500), default="")
     status: Mapped[str] = mapped_column(String(40), default="Applied")
-    cv_version: Mapped[str] = mapped_column(String(100), default="Data Engineer CV v3")
+    cv_version: Mapped[str] = mapped_column(String(100), default="Current CV")
     match_score: Mapped[float] = mapped_column(Float, default=0)
     applied_date: Mapped[date] = mapped_column(Date, default=date.today)
     notes: Mapped[str] = mapped_column(Text, default="")

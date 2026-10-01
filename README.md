@@ -119,3 +119,54 @@ docker compose up --build --force-recreate
 ```
 
 If Docker Desktop itself reports an HTTP 500 container-networking error, quit and reopen Docker Desktop once, then run the commands above again. That error comes from Docker Desktop's network engine rather than the FastAPI application.
+
+
+## Live data and CV workflow
+
+JobIntel no longer uses demo market numbers. The dashboard is calculated from records stored in PostgreSQL.
+
+### Current job feeds
+
+The core build uses free public job feeds that do not require paid API keys:
+
+- **Arbeitnow** for current Europe/Germany-focused jobs.
+- **Jobicy** for current remote jobs filtered to Germany.
+
+JobIntel filters the feeds toward software engineering, backend, data engineering, QA automation, AI/ML, platform/DevOps and working-student roles, normalizes the listings, extracts technical skills, stores the current snapshot in PostgreSQL, and preserves the source job URL.
+
+Use the dashboard button **Refresh Current Jobs**, or call:
+
+```bash
+curl -X POST http://localhost:8100/api/jobs/sync
+```
+
+### Upload your CV
+
+From the **ATS CV Check** card, upload a PDF, DOCX or TXT CV. JobIntel will:
+
+1. extract the CV text locally,
+2. calculate ATS Readiness,
+3. detect technical skills,
+4. store the CV profile in your local PostgreSQL database,
+5. rescore every currently stored job against that CV,
+6. rebuild skill-gap and interview-readiness cards from the live job snapshot.
+
+Your CV is not sent to Arbeitnow or Jobicy.
+
+### After updating from the earlier demo build
+
+Pull and rebuild:
+
+```bash
+git pull origin main
+docker compose down --remove-orphans
+docker compose up --build --force-recreate
+```
+
+Open:
+
+- Dashboard: http://localhost:3100
+- API: http://localhost:8100
+- API docs: http://localhost:8100/docs
+
+The first backend startup may take a little longer because it performs an initial live-job sync when the local live-jobs table is empty.

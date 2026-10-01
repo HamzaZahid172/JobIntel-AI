@@ -1,15 +1,82 @@
 <!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JobIntel AI</title><link rel="stylesheet" href="/styles.css"></head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>JobIntel AI</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
 <body>
 <div class="app">
-<aside><div class="brand"><div class="logo">C</div><span>JobIntel AI</span></div><nav id="nav"></nav><div class="sideNote"><b>✨ 100% local-first</b><small>No paid API required</small></div></aside>
-<main>
-<header><div><h1>JobIntel AI</h1><p>🇩🇪 AI-Powered Career Intelligence for Germany</p></div><div class="manual">✎ Manual applications only</div><div class="headerIcons">⌕ 🔔 <div class="avatar">HZ</div></div></header>
-<section id="metrics" class="metrics"></section>
-<section class="grid3"><div id="matches" class="card panel"></div><div id="skills" class="card panel"></div><div class="stack"><div id="pipeline" class="card panel"></div><div id="ats" class="card panel ats"></div></div></section>
-<section class="grid4"><div id="performance" class="card panel"></div><div id="gaps" class="card panel"></div><div id="readiness" class="card panel"></div><div id="followups" class="card panel"></div></section>
-<section class="bottom"><div id="suggestions" class="card panel suggestions"></div><div class="card chat"><div class="chatHead"><b>🤖 Career Assistant</b><span>● Online</span></div><div id="messages" class="messages"><div class="bubble ai">Ask me about CV improvement, ATS readiness, skill gaps or interviews.</div></div><div class="chatInput"><input id="chatInput" placeholder="Ask JobIntel AI…"><button id="sendChat">➤</button></div></div></section>
-</main>
+  <aside>
+    <div class="brand"><div class="logo">J</div><span>JobIntel AI</span></div>
+    <nav id="nav"></nav>
+    <div class="sideNote"><b>✨ Local-first</b><small>Free job feeds + local CV analysis</small></div>
+  </aside>
+
+  <main>
+    <header>
+      <div>
+        <h1>JobIntel AI</h1>
+        <p>🇩🇪 Live Career Intelligence for Germany</p>
+        <div id="marketStatus" class="marketStatus">Loading live market data…</div>
+      </div>
+      <div class="headerActions">
+        <button id="refreshJobs" class="secondary">↻ Refresh Current Jobs</button>
+        <div class="manual">✎ Applications tracked manually</div>
+      </div>
+      <div class="headerIcons">🔔 <div class="avatar">HZ</div></div>
+    </header>
+
+    <section id="metrics" class="metrics"></section>
+
+    <section class="grid3">
+      <div id="matches" class="card panel"></div>
+      <div id="skills" class="card panel"></div>
+      <div class="stack">
+        <div id="pipeline" class="card panel"></div>
+        <div id="ats" class="card panel ats"></div>
+      </div>
+    </section>
+
+    <section class="grid4">
+      <div id="performance" class="card panel"></div>
+      <div id="gaps" class="card panel"></div>
+      <div id="readiness" class="card panel"></div>
+      <div id="followups" class="card panel"></div>
+    </section>
+
+    <section class="bottom">
+      <div id="suggestions" class="card panel suggestions"></div>
+      <div class="card chat">
+        <div class="chatHead"><b>🤖 Career Assistant</b><span>● Online</span></div>
+        <div id="messages" class="messages">
+          <div class="bubble ai">Upload your CV and refresh live jobs, then ask me what you should improve next.</div>
+        </div>
+        <div class="chatInput">
+          <input id="chatInput" placeholder="Ask JobIntel AI…">
+          <button id="sendChat">➤</button>
+        </div>
+      </div>
+    </section>
+  </main>
 </div>
-<div id="modal" class="modal hidden"><form id="appForm" class="modalCard"><div class="panelHead"><h3>Add manual application</h3><button type="button" id="closeModal" class="iconBtn">✕</button></div><label>Company<input name="company" required></label><label>Role<input name="role" required></label><label>Location<input name="location" value="Germany"></label><label>Job URL<input name="url"></label><label>CV version<input name="cv_version" value="Data Engineer CV v3"></label><label>Match score<input name="match_score" type="number" min="0" max="100" value="75"></label><label>Status<select name="status"><option>Saved</option><option selected>Applied</option><option>Screening</option><option>Interview</option><option>Final</option><option>Offer</option><option>Rejected</option></select></label><label>Notes<input name="notes"></label><button class="primary" type="submit">Save application</button></form></div>
-<script src="/app.js"></script></body></html>
+
+<div id="modal" class="modal hidden">
+  <form id="appForm" class="modalCard">
+    <div class="panelHead"><h3>Add manual application</h3><button type="button" id="closeModal" class="iconBtn">✕</button></div>
+    <label>Company<input name="company" required></label>
+    <label>Role<input name="role" required></label>
+    <label>Location<input name="location" value="Germany"></label>
+    <label>Job URL<input name="url"></label>
+    <label>CV version<input name="cv_version" value="Current CV"></label>
+    <label>Match score<input name="match_score" type="number" min="0" max="100" value="0"></label>
+    <label>Status<select name="status"><option>Saved</option><option selected>Applied</option><option>Screening</option><option>Interview</option><option>Final</option><option>Offer</option><option>Rejected</option></select></label>
+    <label>Notes<input name="notes"></label>
+    <button class="primary" type="submit">Save application</button>
+  </form>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
