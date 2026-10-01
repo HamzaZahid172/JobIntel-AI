@@ -25,9 +25,9 @@ docker compose up --build
 ```
 
 Open:
-- UI: http://localhost:3000
-- API docs: http://localhost:8000/docs
-- API health: http://localhost:8000/health
+- UI: http://localhost:3100
+- API docs: http://localhost:8100/docs
+- API health: http://localhost:8100/health
 
 ### Optional local LLM
 
@@ -85,7 +85,7 @@ docker compose --profile data up --build --force-recreate
 Check that the API is healthy:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8100/health
 ```
 
 Expected output:
@@ -95,3 +95,27 @@ Expected output:
 ```
 
 The backend now retries database connectivity during startup, so a transient Docker Desktop DNS delay will not immediately terminate the API.
+
+
+## Running JobIntel alongside other Docker projects
+
+JobIntel intentionally uses its own host ports so projects such as GreenOps AI can stay running at the same time:
+
+- JobIntel UI: `http://localhost:3100`
+- JobIntel API: `http://localhost:8100`
+- JobIntel PostgreSQL host port: `5433`
+- Optional Redpanda host port: `19092`
+- Optional ClickHouse HTTP/native ports: `18123` / `19000`
+
+Inside Docker, the backend still connects to PostgreSQL using the Compose service address `db:5432`. Host ports do not affect service-to-service communication.
+
+If Docker Desktop previously created stale JobIntel containers or networks, use this clean restart:
+
+```bash
+git pull origin main
+docker compose --profile data down --remove-orphans
+docker compose down --remove-orphans
+docker compose up --build --force-recreate
+```
+
+If Docker Desktop itself reports an HTTP 500 container-networking error, quit and reopen Docker Desktop once, then run the commands above again. That error comes from Docker Desktop's network engine rather than the FastAPI application.
