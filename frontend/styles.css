@@ -6,3 +6,37 @@
 
 
 .skillRow{display:grid;gap:5px;padding:6px 0}.skillName{display:flex;justify-content:space-between;gap:12px;align-items:baseline}.skillName b{text-transform:none}.skillName small{color:#73859f;font-size:10px;text-align:right}.skillBar{height:9px;background:#edf2f7;border-radius:999px;overflow:hidden}.skillBar i{display:block;height:100%;background:linear-gradient(90deg,#177ef2,#20c7bd);border-radius:999px}.roleSummary{margin-top:12px;padding-top:10px;border-top:1px solid #edf1f6;font-size:11px}.roleSummary>b{display:block;margin-bottom:6px}.roleTag{display:inline-block;background:#f0ecff;color:#6a50c7;border-radius:7px;padding:4px 7px;margin:5px 4px 0 0;font-size:10px}.applyBtn{display:inline-block;margin-top:7px;color:#0876f9;font-size:11px;font-weight:700;text-decoration:none}.applyBtn:hover{text-decoration:underline}
+
+
+.hidden{display:none!important}
+.navButton{width:100%;border:0;background:transparent;text-align:left;cursor:pointer;font:inherit}
+.profileMini{position:absolute;left:14px;right:14px;bottom:116px;padding:12px;border:1px solid #e8eef6;border-radius:12px;background:#fff;display:grid;gap:3px}
+.profileMini small{color:#71839c;overflow:hidden;text-overflow:ellipsis}
+.avatarBtn{border:0;cursor:pointer}
+.authScreen{min-height:100vh;display:grid;place-items:center;background:linear-gradient(135deg,#edf6ff,#f8fbff 55%,#eefcf8);padding:24px}
+.authCard{width:min(470px,94vw);background:#fff;border:1px solid #e0e9f3;border-radius:20px;padding:28px;box-shadow:0 22px 55px rgba(20,70,120,.12)}
+.authBrand{margin:0 0 18px}
+.authCard h1{font-size:26px;margin:0 0 8px}.authCard>p{color:#667b99;line-height:1.55}
+.authTabs{display:grid;grid-template-columns:1fr 1fr;background:#f2f6fb;border-radius:10px;padding:4px;margin:20px 0 14px}
+.authTab{border:0;background:transparent;padding:10px;border-radius:8px;cursor:pointer;font-weight:700;color:#657993}
+.authTab.active{background:#fff;color:#0876f9;box-shadow:0 2px 8px rgba(20,60,100,.08)}
+.authForm{display:grid;gap:12px}.authForm label,.detailPage label{display:grid;gap:5px;font-size:12px;color:#506688}
+.authForm input,.detailPage input,.detailPage textarea,.detailPage select,.pageToolbar input,.pageToolbar select,.statusSelect,.modalCard textarea{border:1px solid #dce6f0;border-radius:8px;padding:10px;outline:none;background:#fff}
+.authMessage{min-height:20px;color:#d74343;font-size:12px;margin-top:10px}
+.pageLoading{padding:50px;text-align:center;color:#71839c}
+.pageToolbar{padding:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.pageToolbar>div:first-child{margin-right:auto;display:grid}.pageToolbar small{color:#71839c}
+.pageToolbar input{min-width:280px;flex:1}.pageToolbar select{min-width:130px}
+.resultCount{font-size:12px;color:#71839c;margin:8px 2px 12px}
+.jobMarketGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.marketJob{padding:16px}.marketJobTop{display:flex;justify-content:space-between;gap:14px}.marketJob h3{margin:8px 0 4px;font-size:17px}.marketJob p{margin:4px 0;color:#667b99}
+.scoreBadge{width:70px;height:70px;flex:none;border-radius:50%;display:grid;place-items:center;align-content:center;background:#edf9f5;border:7px solid #58bda5;font-weight:800;font-size:18px}.scoreBadge small{font-size:9px;color:#647891}
+.tagRow{margin:8px 0}.missingLine{font-size:11px!important}.jobActions{display:flex;gap:8px;align-items:center;margin-top:12px}.primaryLink{background:#0876f9;color:#fff;text-decoration:none;padding:9px 12px;border-radius:8px;font-size:12px;font-weight:700}
+.tableCard{overflow:auto}.dataTable{width:100%;border-collapse:collapse}.dataTable th,.dataTable td{text-align:left;padding:12px;border-bottom:1px solid #eaf0f6;font-size:12px}.dataTable th{color:#617590;background:#f8fafc}
+.detailPage{padding:22px}.detailPage h2{margin-top:0}.detailGrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.skillDetail,.analyticsRow,.sourceRow{display:flex;justify-content:space-between;gap:12px;padding:11px 0;border-bottom:1px solid #edf1f6}.skillDetail span,.analyticsRow span,.sourceRow small{color:#71839c;font-size:12px}
+.gapPage{padding:12px 0;border-bottom:1px solid #edf1f6}.gapPage p{color:#667b99;font-size:12px}
+.analyticsGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.pageIntro{margin-bottom:14px}.pageIntro h2{margin-bottom:4px}.pageIntro p{color:#667b99}
+.dangerButton{border:1px solid #f0c6c2;background:#fff5f4;color:#c53d31;border-radius:8px;padding:9px 12px;font-weight:700;cursor:pointer;margin-top:8px}
+.policyNote{background:#fff9ed;border:1px solid #f1dfb9;padding:12px;border-radius:10px;color:#755b28;font-size:12px;line-height:1.5}
+.checkLabel{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center;gap:8px!important}
+@media(max-width:1000px){.jobMarketGrid,.detailGrid,.analyticsGrid{grid-template-columns:1fr}.pageToolbar input{min-width:100%}}
