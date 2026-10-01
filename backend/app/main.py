@@ -1,17 +1,27 @@
 import json
 import logging
+import secrets
 from collections import Counter
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from io import BytesIO
 
 from docx import Document
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
-from .assistant import answer
+from .assistant import answer, assistant_status
+from .auth import (
+    claim_legacy_workspace,
+    create_session,
+    ensure_auth_columns,
+    get_current_user,
+    hash_password,
+    logout_token,
+    verify_password,
+)
 from .db import Base, SessionLocal, engine, get_db, wait_for_database
 from .intelligence import (
     aggregate_skills,
@@ -22,17 +32,32 @@ from .intelligence import (
     profile_role_families,
     rank_cv_skills,
 )
-from .models import Application, CVProfile, Job, LiveJob
+from .models import Application, CVProfile, Job, LiveJob, User
 from .schemas import (
     ApplicationCreate,
     ApplicationOut,
     ApplicationUpdate,
     AssistantRequest,
+    LoginRequest,
+    ManualJobImport,
     MatchRequest,
+    ProfileUpdate,
+    RegisterRequest,
 )
 from .sources import latest_cv, rescore_jobs, sync_current_jobs
 
 logger = logging.getLogger("jobintel")
+
+
+def user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "target_roles": user.target_roles,
+        "target_locations": user.target_locations,
+        "created_at": user.created_at.isoformat(),
+    }
 
 
 def cleanup_legacy_demo_data(db: Session) -> None:
@@ -82,6 +107,7 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
         "location": job.location,
         "remote": job.remote,
         "url": job.url,
+        "description": job.description,
         "skills": [s for s in job.skills.split(",") if s],
         "job_types": [s for s in job.job_types.split(",") if s],
         "match": details["overall_score"] if details else job.match_score,
@@ -100,19 +126,14 @@ def candidate_job_records(cv: CVProfile | None, jobs: list[LiveJob]) -> list[tup
 
     strongest = {item["skill"] for item in rank_cv_skills(cv.text, limit=10)}
     records: list[tuple[LiveJob, dict]] = []
-
     for job in jobs:
         details = match_details(cv, job)
         job_skills = set(details["job_skills"])
         strong_overlap = strongest & job_skills
-
-        # Candidate jobs need both role relevance and evidence from the CV.
-        # This removes generic sales/product/finance jobs that happen to mention APIs/data.
         if details["role_score"] < 45:
             continue
         if not strong_overlap and len(details["matched_skills"]) < 2:
             continue
-
         records.append((job, details))
 
     records.sort(
@@ -131,16 +152,16 @@ def build_skill_gap(cv: CVProfile | None, jobs: list[LiveJob]) -> list[dict]:
         return []
     cv_skills = set(extract_skills(cv.text))
     missing = Counter()
-    for job in jobs[:80]:
+    for job in jobs[:100]:
         for skill in [s for s in job.skills.split(",") if s]:
             if skill not in cv_skills:
                 missing[skill] += 1
 
-    suggestions = improvement_suggestions([s for s, _ in missing.most_common(10)])
+    suggestions = improvement_suggestions([s for s, _ in missing.most_common(12)])
     for suggestion in suggestions:
         key = suggestion["skill"].lower()
         suggestion["market_count"] = missing.get(key, 0)
-    return suggestions[:4]
+    return suggestions[:6]
 
 
 def application_performance(apps: list[Application]) -> list[dict]:
@@ -157,13 +178,14 @@ def application_performance(apps: list[Application]) -> list[dict]:
             "value": round(interviews / len(rows) * 100) if rows else 0,
             "applications": len(rows),
         })
-    return sorted(result, key=lambda x: (x["value"], x["applications"]), reverse=True)[:4]
+    return sorted(result, key=lambda x: (x["value"], x["applications"]), reverse=True)[:6]
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     wait_for_database()
     Base.metadata.create_all(bind=engine)
+    ensure_auth_columns()
     db = SessionLocal()
     try:
         cleanup_legacy_demo_data(db)
@@ -172,17 +194,12 @@ async def lifespan(app: FastAPI):
                 sync_current_jobs(db)
             except Exception:
                 logger.exception("Initial live-job sync failed; app will start with an empty market.")
-
-        cv = latest_cv(db)
-        if cv:
-            refresh_cv_analysis(db, cv)
-            rescore_jobs(db, cv)
     finally:
         db.close()
     yield
 
 
-app = FastAPI(title="JobIntel AI API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="JobIntel AI API", version="0.4.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -194,38 +211,169 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.3.0"}
+    return {"status": "ok", "version": "0.4.0"}
+
+
+@app.post("/api/auth/register")
+def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(400, "Enter a valid email address.")
+    if db.query(User).filter(User.email == email).first():
+        raise HTTPException(409, "An account with this email already exists.")
+    try:
+        password_hash = hash_password(payload.password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    user = User(
+        email=email,
+        display_name=payload.display_name.strip() or email.split("@")[0],
+        password_hash=password_hash,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    claim_legacy_workspace(db, user)
+    token = create_session(db, user)
+    return {"token": token, "user": user_payload(user)}
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    email = payload.email.strip().lower()
+    user = db.query(User).filter(User.email == email).first()
+    if not user or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(401, "Invalid email or password.")
+    claim_legacy_workspace(db, user)
+    token = create_session(db, user)
+    return {"token": token, "user": user_payload(user)}
+
+
+@app.post("/api/auth/logout")
+def logout(
+    authorization: str | None = Header(default=None),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    logout_token(db, authorization)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+def me(user: User = Depends(get_current_user)):
+    return user_payload(user)
+
+
+@app.patch("/api/profile")
+def update_profile(
+    payload: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(user, field, value.strip())
+    db.commit()
+    db.refresh(user)
+    return user_payload(user)
+
+
+@app.get("/api/sources")
+def sources(user: User = Depends(get_current_user)):
+    return {
+        "active": [
+            {"name": "Arbeitnow", "mode": "Public API", "status": "active"},
+            {"name": "Jobicy", "mode": "Public API", "status": "active"},
+            {"name": "Manual Import", "mode": "URL + description", "status": "active"},
+        ],
+        "planned": [
+            {"name": "Direct employer ATS", "mode": "Greenhouse / Lever / SmartRecruiters / Teamtailor", "status": "planned"},
+            {"name": "XING", "mode": "Authorized integration only", "status": "restricted"},
+            {"name": "StepStone", "mode": "Authorized integration only", "status": "restricted"},
+        ],
+    }
 
 
 @app.get("/api/jobs")
-def jobs(limit: int = 100, db: Session = Depends(get_db)):
-    cv = latest_cv(db)
+def jobs(
+    limit: int = 300,
+    include_all: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    cv = latest_cv(db, user.id)
     live_jobs = db.query(LiveJob).order_by(LiveJob.posted_at.desc().nullslast()).all()
-    records = candidate_job_records(cv, live_jobs)
-    return [serialize_job(job, details) for job, details in records[: min(max(limit, 1), 300)]]
+    if include_all or not cv:
+        records = [(job, match_details(cv, job) if cv else None) for job in live_jobs]
+        if cv:
+            records.sort(key=lambda row: row[1]["overall_score"], reverse=True)
+    else:
+        records = candidate_job_records(cv, live_jobs)
+    return [serialize_job(job, details) for job, details in records[: min(max(limit, 1), 500)]]
 
 
 @app.post("/api/jobs/sync")
-def sync_jobs(db: Session = Depends(get_db)):
-    result = sync_current_jobs(db)
-    cv = latest_cv(db)
-    if cv:
-        rescore_jobs(db, cv)
+def sync_jobs(
+    force: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    result = sync_current_jobs(db, force=force)
     return {
         **result,
-        "message": "Current job feeds refreshed, filtered and stored in PostgreSQL.",
+        "message": "Current public job feeds refreshed and stored in PostgreSQL.",
         "synced_at": datetime.utcnow().isoformat(),
     }
 
 
+@app.post("/api/jobs/import")
+def import_job(
+    payload: ManualJobImport,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    source = payload.source.strip() or "Manual"
+    source_id = "manual-" + secrets.token_hex(8)
+    job = LiveJob(
+        source=source,
+        source_id=source_id,
+        title=payload.title.strip(),
+        company=payload.company.strip(),
+        location=payload.location.strip() or "Germany",
+        remote=payload.remote,
+        url=payload.url.strip(),
+        description=payload.description.strip(),
+        skills=",".join(extract_skills(payload.title + " " + payload.description)),
+        job_types="",
+        match_score=None,
+        posted_at=datetime.utcnow(),
+        fetched_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    cv = latest_cv(db, user.id)
+    details = match_details(cv, job) if cv else None
+    return serialize_job(job, details)
+
+
 @app.get("/api/applications", response_model=list[ApplicationOut])
-def applications(db: Session = Depends(get_db)):
-    return db.query(Application).order_by(Application.created_at.desc()).all()
+def applications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return (
+        db.query(Application)
+        .filter(Application.user_id == user.id)
+        .order_by(Application.created_at.desc())
+        .all()
+    )
 
 
 @app.post("/api/applications", response_model=ApplicationOut)
-def add_application(payload: ApplicationCreate, db: Session = Depends(get_db)):
-    item = Application(**payload.model_dump())
+def add_application(
+    payload: ApplicationCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = Application(user_id=user.id, **payload.model_dump())
     db.add(item)
     db.commit()
     db.refresh(item)
@@ -236,11 +384,16 @@ def add_application(payload: ApplicationCreate, db: Session = Depends(get_db)):
 def update_application(
     application_id: int,
     payload: ApplicationUpdate,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    item = db.get(Application, application_id)
+    item = (
+        db.query(Application)
+        .filter(Application.id == application_id, Application.user_id == user.id)
+        .first()
+    )
     if not item:
-        raise HTTPException(404, "Application not found")
+        raise HTTPException(404, "Application not found.")
     for key, value in payload.model_dump(exclude_none=True).items():
         setattr(item, key, value)
     db.commit()
@@ -249,15 +402,14 @@ def update_application(
 
 
 @app.get("/api/cv")
-def get_cv(db: Session = Depends(get_db)):
-    cv = latest_cv(db)
+def get_cv(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cv = latest_cv(db, user.id)
     if not cv:
         return {"uploaded": False}
 
     details = refresh_cv_analysis(db, cv)
     relevant = candidate_job_records(cv, db.query(LiveJob).all())
-    top_skills = rank_cv_skills(cv.text, [job.skills for job, _ in relevant], limit=10)
-
+    top_skills = rank_cv_skills(cv.text, [job.skills for job, _ in relevant], limit=12)
     return {
         "uploaded": True,
         "id": cv.id,
@@ -271,7 +423,11 @@ def get_cv(db: Session = Depends(get_db)):
 
 
 @app.post("/api/cv/upload")
-async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def upload_cv(
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     raw = await file.read()
     if len(raw) > 8 * 1024 * 1024:
         raise HTTPException(400, "CV file is too large. Maximum size is 8 MB.")
@@ -282,6 +438,7 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
 
     result = ats_check(text)
     profile = CVProfile(
+        user_id=user.id,
         filename=file.filename or "cv",
         text=text,
         skills=",".join(result["skills_detected"]),
@@ -293,33 +450,30 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
     db.commit()
     db.refresh(profile)
     rescored = rescore_jobs(db, profile)
-
     return {
         "uploaded": True,
         "filename": profile.filename,
         "ats": result,
         "jobs_rescored": rescored,
-        "message": "CV saved locally. Current jobs were filtered and rescored against your profile.",
+        "message": "CV saved locally. Current jobs will be filtered and scored against this profile.",
     }
 
 
-@app.post("/api/cv/ats")
-async def cv_ats(file: UploadFile = File(...)):
-    raw = await file.read()
-    text = extract_document_text(file.filename or "cv.pdf", raw)
-    return ats_check(text)
-
-
 @app.post("/api/match")
-def match(payload: MatchRequest):
+def match(payload: MatchRequest, user: User = Depends(get_current_user)):
     return match_cv_to_job(payload.cv_text, payload.job_description)
 
 
 @app.get("/api/dashboard")
-def dashboard(db: Session = Depends(get_db)):
+def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     all_jobs = db.query(LiveJob).order_by(LiveJob.posted_at.desc().nullslast()).all()
-    apps = db.query(Application).order_by(Application.created_at.desc()).all()
-    cv = latest_cv(db)
+    apps = (
+        db.query(Application)
+        .filter(Application.user_id == user.id)
+        .order_by(Application.created_at.desc())
+        .all()
+    )
+    cv = latest_cv(db, user.id)
 
     statuses = ["Saved", "Applied", "Screening", "Interview", "Final", "Offer", "Rejected"]
     counts = {status: sum(1 for app in apps if app.status == status) for status in statuses}
@@ -327,7 +481,6 @@ def dashboard(db: Session = Depends(get_db)):
 
     records = candidate_job_records(cv, all_jobs)
     relevant_jobs = [job for job, _ in records]
-
     today = date.today()
     new_today = sum(1 for job in relevant_jobs if job.posted_at and job.posted_at.date() == today)
 
@@ -354,14 +507,14 @@ def dashboard(db: Session = Depends(get_db)):
     performance = application_performance(apps)
 
     followups = []
-    for app_row in apps:
-        if app_row.status in {"Applied", "Screening", "Interview"}:
-            days = (today - app_row.applied_date).days
+    for row in apps:
+        if row.status in {"Applied", "Screening", "Interview"}:
+            days = (today - row.applied_date).days
             if days >= 5:
                 followups.append({
-                    "company": app_row.company,
-                    "role": app_row.role,
-                    "status": app_row.status,
+                    "company": row.company,
+                    "role": row.role,
+                    "status": row.status,
                     "days": days,
                 })
 
@@ -369,7 +522,7 @@ def dashboard(db: Session = Depends(get_db)):
     if not cv:
         suggestions.append({
             "title": "Upload your CV",
-            "detail": "JobIntel needs your CV before it can rank your skills and filter jobs to your profile.",
+            "detail": "JobIntel needs your CV before it can rank skills and filter jobs to your profile.",
         })
     else:
         for gap in gaps[:3]:
@@ -379,7 +532,7 @@ def dashboard(db: Session = Depends(get_db)):
             })
         if not suggestions:
             suggestions.append({
-                "title": "Your current skill overlap is strong",
+                "title": "Your current overlap is strong",
                 "detail": "Focus on tailoring project evidence and keywords to each high-match vacancy.",
             })
 
@@ -404,6 +557,7 @@ def dashboard(db: Session = Depends(get_db)):
         "profile": {
             "top_skills": top_skills,
             "role_families": role_families,
+            "user": user_payload(user),
         },
         "cv": {
             "uploaded": bool(cv),
@@ -422,22 +576,41 @@ def dashboard(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/assistant/status")
+async def get_assistant_status(user: User = Depends(get_current_user)):
+    return await assistant_status()
+
+
 @app.post("/api/assistant")
-async def assistant(payload: AssistantRequest, db: Session = Depends(get_db)):
-    cv = latest_cv(db)
+async def assistant(
+    payload: AssistantRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    cv = latest_cv(db, user.id)
     all_jobs = db.query(LiveJob).all()
     records = candidate_job_records(cv, all_jobs)
     relevant_jobs = [job for job, _ in records]
+    apps = db.query(Application).filter(Application.user_id == user.id).all()
 
     context = {
+        "user": user_payload(user),
         "cv_uploaded": bool(cv),
-        "applications": db.query(Application).count(),
+        "applications": len(apps),
+        "application_statuses": dict(Counter(app.status for app in apps)),
         "tracked_live_jobs": len(relevant_jobs) if cv else len(all_jobs),
-        "top_profile_skills": [item["skill"] for item in rank_cv_skills(cv.text, limit=8)] if cv else [],
+        "top_profile_skills": [item["skill"] for item in rank_cv_skills(cv.text, limit=10)] if cv else [],
         "top_matches": [
-            {"title": job.title, "company": job.company, "match": details["overall_score"]}
-            for job, details in records[:5] if details
+            {
+                "title": job.title,
+                "company": job.company,
+                "location": job.location,
+                "match": details["overall_score"],
+                "matched_skills": details["matched_skills"][:8],
+                "missing_skills": details["missing_skills"][:8],
+            }
+            for job, details in records[:8] if details
         ],
         "top_missing_skills": [gap["skill"] for gap in build_skill_gap(cv, relevant_jobs)],
     }
-    return {"answer": await answer(payload.message, context)}
+    return await answer(payload.message, context)

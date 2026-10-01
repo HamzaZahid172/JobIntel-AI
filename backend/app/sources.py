@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from sqlalchemy.orm import Session
 
-from .intelligence import extract_skills, is_target_technical_role, match_cv_to_job
+from .intelligence import extract_skills, is_target_technical_role
 from .models import CVProfile, LiveJob
 
 logger = logging.getLogger("jobintel.sources")
@@ -14,13 +14,6 @@ logger = logging.getLogger("jobintel.sources")
 ARBEITNOW_URL = "https://www.arbeitnow.com/api/job-board-api"
 JOBICY_URL = "https://jobicy.com/api/v2/remote-jobs"
 MIN_SYNC_INTERVAL = timedelta(hours=1)
-
-ROLE_TERMS = (
-    "software", "developer", "engineer", "backend", "full stack", "fullstack",
-    "data", "automation", "qa", "quality assurance", "test", "machine learning",
-    "artificial intelligence", " ai ", "ml ", "platform", "devops", "cloud",
-    "site reliability", "sre", "python", "fastapi", "werkstudent", "working student",
-)
 
 GERMAN_LOCATIONS = (
     "germany", "berlin", "munich", "münchen", "hamburg", "frankfurt", "cologne",
@@ -42,15 +35,11 @@ def listish(value) -> list[str]:
 def strip_html(value: str | None) -> str:
     if not value:
         return ""
-    text = re.sub(r"<[^>]+>", " ", value)
-    text = html.unescape(text)
-    return re.sub(r"\s+", " ", text).strip()
+    value = re.sub(r"<[^>]+>", " ", value)
+    return re.sub(r"\s+", " ", html.unescape(value)).strip()
 
 
 def relevant_role(title: str, description: str = "") -> bool:
-    # Title-first technical-role filtering prevents generic sales/product/finance
-    # listings from entering the candidate pool merely because the description
-    # mentions APIs, data or software.
     return is_target_technical_role(title, description)
 
 
@@ -75,14 +64,11 @@ def parse_timestamp(value) -> datetime | None:
         return None
 
 
-def latest_cv(db: Session) -> CVProfile | None:
-    return db.query(CVProfile).order_by(CVProfile.uploaded_at.desc()).first()
-
-
-def _score(cv: CVProfile | None, title: str, description: str) -> float | None:
-    if not cv:
-        return None
-    return float(match_cv_to_job(cv.text, description, title)["overall_score"])
+def latest_cv(db: Session, user_id: int | None = None) -> CVProfile | None:
+    query = db.query(CVProfile)
+    if user_id is not None:
+        query = query.filter(CVProfile.user_id == user_id)
+    return query.order_by(CVProfile.uploaded_at.desc()).first()
 
 
 def fetch_arbeitnow(client: httpx.Client, pages: int = 3) -> list[dict]:
@@ -98,12 +84,9 @@ def fetch_arbeitnow(client: httpx.Client, pages: int = 3) -> list[dict]:
             location = item.get("location") or "Germany"
             remote = bool(item.get("remote"))
             url = item.get("url") or ""
-            if not relevant_role(title, description):
-                continue
-            if not germany_relevant(location, remote, url):
+            if not relevant_role(title, description) or not germany_relevant(location, remote, url):
                 continue
             tags = listish(item.get("tags"))
-            skills = extract_skills(" ".join([title, description, " ".join(tags)]))
             jobs.append({
                 "source": "Arbeitnow",
                 "source_id": str(item.get("slug") or url),
@@ -113,7 +96,7 @@ def fetch_arbeitnow(client: httpx.Client, pages: int = 3) -> list[dict]:
                 "remote": remote,
                 "url": url,
                 "description": description,
-                "skills": skills,
+                "skills": extract_skills(" ".join([title, description, " ".join(tags)])),
                 "job_types": listish(item.get("job_types")),
                 "posted_at": parse_timestamp(item.get("created_at")),
             })
@@ -133,7 +116,6 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
         if not relevant_role(title, description):
             continue
         industries = listish(item.get("jobIndustry"))
-        skills = extract_skills(" ".join([title, description, " ".join(industries)]))
         jobs.append({
             "source": "Jobicy",
             "source_id": str(item.get("id") or item.get("url")),
@@ -143,7 +125,7 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
             "remote": True,
             "url": item.get("url") or "",
             "description": description,
-            "skills": skills,
+            "skills": extract_skills(" ".join([title, description, " ".join(industries)])),
             "job_types": listish(item.get("jobType")),
             "posted_at": parse_timestamp(item.get("pubDate")),
         })
@@ -151,7 +133,7 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
 
 
 def sync_current_jobs(db: Session, force: bool = False) -> dict:
-    last_job = db.query(LiveJob).order_by(LiveJob.fetched_at.desc()).first()
+    last_job = db.query(LiveJob).filter(LiveJob.source.in_(["Arbeitnow", "Jobicy"])).order_by(LiveJob.fetched_at.desc()).first()
     if not force and last_job and datetime.utcnow() - last_job.fetched_at < MIN_SYNC_INTERVAL:
         return {
             "stored": db.query(LiveJob).count(),
@@ -162,11 +144,9 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
             "next_refresh_after": (last_job.fetched_at + MIN_SYNC_INTERVAL).isoformat(),
         }
 
-    cv = latest_cv(db)
     fetched: list[dict] = []
     errors: list[str] = []
-
-    with httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": "JobIntelAI/0.2"}) as client:
+    with httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": "JobIntelAI/0.4"}) as client:
         for name, loader in (("Arbeitnow", fetch_arbeitnow), ("Jobicy", fetch_jobicy)):
             try:
                 fetched.extend(loader(client))
@@ -174,15 +154,11 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
                 logger.exception("%s sync failed", name)
                 errors.append(f"{name}: {type(exc).__name__}")
 
-    deduped: dict[tuple[str, str], dict] = {}
-    for item in fetched:
-        deduped[(item["source"], item["source_id"])] = item
-
+    deduped = {(item["source"], item["source_id"]): item for item in fetched}
     if deduped:
-        db.query(LiveJob).delete()
+        db.query(LiveJob).filter(LiveJob.source.in_(["Arbeitnow", "Jobicy"])).delete(synchronize_session=False)
         now = datetime.utcnow()
         for item in deduped.values():
-            description = item["description"]
             db.add(LiveJob(
                 source=item["source"],
                 source_id=item["source_id"],
@@ -191,10 +167,10 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
                 location=item["location"],
                 remote=item["remote"],
                 url=item["url"],
-                description=description,
+                description=item["description"],
                 skills=",".join(item["skills"]),
                 job_types=",".join(item["job_types"]),
-                match_score=_score(cv, item["title"], description),
+                match_score=None,
                 posted_at=item["posted_at"],
                 fetched_at=now,
             ))
@@ -210,8 +186,4 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
 
 
 def rescore_jobs(db: Session, cv: CVProfile) -> int:
-    jobs = db.query(LiveJob).all()
-    for job in jobs:
-        job.match_score = _score(cv, job.title, job.description)
-    db.commit()
-    return len(jobs)
+    return db.query(LiveJob).count()

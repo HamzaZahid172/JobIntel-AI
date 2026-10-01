@@ -1,13 +1,34 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(120))
+    password_hash: Mapped[str] = mapped_column(Text)
+    target_roles: Mapped[str] = mapped_column(Text, default="Backend Python,QA Automation,Data Engineering,AI Engineering")
+    target_locations: Mapped[str] = mapped_column(Text, default="Germany,Remote")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Job(Base):
-    """Legacy table kept so existing local volumes remain compatible."""
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -45,6 +66,7 @@ class CVProfile(Base):
     __tablename__ = "cv_profiles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     filename: Mapped[str] = mapped_column(String(255))
     text: Mapped[str] = mapped_column(Text)
     skills: Mapped[str] = mapped_column(Text, default="")
@@ -58,6 +80,7 @@ class Application(Base):
     __tablename__ = "applications"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     company: Mapped[str] = mapped_column(String(160))
     role: Mapped[str] = mapped_column(String(200))
     location: Mapped[str] = mapped_column(String(160), default="Germany")
