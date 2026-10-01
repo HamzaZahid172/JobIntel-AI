@@ -10,7 +10,7 @@ Local-first, zero-paid-service career intelligence platform for Germany-focused 
 - CV-to-job skill matching and explainable gaps
 - Improvement suggestions (Kafka, Airflow, Terraform, German, CV targeting)
 - Job matches, skills-in-demand view, performance cards and follow-ups
-- Embedded Career Assistant with deterministic answers and optional local Ollama
+- Embedded Career Assistant with local Ollama and deterministic fallback
 - PostgreSQL persistence
 - Docker Compose one-command startup
 - Backend tests and GitHub Actions CI
@@ -29,16 +29,16 @@ Open:
 - API docs: http://localhost:8100/docs
 - API health: http://localhost:8100/health
 
-### Optional local LLM
+### Local LLM
 
-Install Ollama locally, pull a free model, then set:
+The default Docker Compose stack starts Ollama locally and an init container ensures the configured model is available:
 
 ```env
-USE_OLLAMA=true
 OLLAMA_MODEL=llama3.2:3b
+USE_OLLAMA=true
 ```
 
-No paid AI API is required. Without Ollama, the Career Assistant uses deterministic local guidance.
+No paid AI API is required. If Ollama is still starting/downloading or is disabled, supported assistant and cover-letter flows fall back to deterministic local logic.
 
 ### Optional data-engineering services
 
@@ -212,10 +212,36 @@ See `docs/DATA_SOURCES.md` for the XING/StepStone strategy. JobIntel does not au
 
 ## v0.5 collectors + cover letters
 
-JobIntel can now add employer-specific **Lever** and **SmartRecruiters** posting collectors from Settings. These use official/public posting interfaces and feed the same PostgreSQL job pipeline.
+JobIntel can now add employer-specific **Lever**, **SmartRecruiters**, and **Ashby** posting collectors from Settings. These use official/public posting interfaces and feed the same PostgreSQL job pipeline.
 
 Existing external collectors can integrate through `POST /api/jobs/bulk-import`, so a Playwright collector can remain an isolated data-collection process instead of becoming part of the dashboard runtime.
 
 Every matched job now has **Create cover letter**. The backend uses the current CV plus the stored job description and downloads a tailored `.docx`. Ollama is used when enabled and reachable; otherwise a grounded deterministic template is generated.
 
 See `docs/COLLECTORS_AND_COVER_LETTERS.md`.
+
+
+## v0.6 Ashby + application automation architecture
+
+Ashby is now a configurable direct employer source. In **Settings → Direct employer ATS collectors**, add:
+
+- Provider: `Ashby`
+- Company label: the employer name
+- Identifier: the final path component of the employer's Ashby board, for example `CompanyName` from `https://jobs.ashbyhq.com/CompanyName`
+
+**Refresh Current Jobs** combines Arbeitnow, Jobicy and all configured Lever / SmartRecruiters / Ashby targets before CV filtering and matching.
+
+The next product stage is documented as the **Intelligent Application Engine**:
+
+```text
+Ready-to-Apply queue
+→ application package
+→ screening answers
+→ human approval
+→ authorized provider submission
+→ application CRM
+```
+
+See `docs/APPLICATION_AUTOMATION_ARCHITECTURE.md`.
+
+The existing external collector bridge remains available at `POST /api/jobs/bulk-import`.
