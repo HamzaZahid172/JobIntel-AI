@@ -94,19 +94,32 @@ class SubmissionAdapter:
 - error_code
 - error_message
 
+## Current implementation status
+
+v0.7 implements the Match Layer and the first usable Application Preparation Layer:
+
+- persistent application packages
+- minimum-match validation
+- CV-grounded cover letters
+- safe draft answers for role motivation and relevant experience
+- explicit unresolved fields for personal facts
+- Application Prep review UI
+
+Provider-specific screening-form extraction and actual submission are not implemented yet.
+
 ## Phase A: automatic preparation
 
-Implement first:
+Implemented baseline:
 
-1. user chooses minimum match threshold,
-2. jobs passing match + hard filters enter Ready-to-Apply,
-3. cover letter is generated,
-4. standard profile answers are filled,
-5. screening questions are collected when an authorized interface exposes them,
-6. JobIntel flags unanswered/high-risk questions,
-7. user reviews the package.
+1. minimum match threshold is validated,
+2. the structured Match Layer checks hard blockers,
+3. a cover letter is generated,
+4. safe screening drafts are prepared,
+5. unknown personal facts are flagged for user input,
+6. the package is persisted,
+7. the user reviews it in **Application Prep**.
 
-No submission occurs automatically in this phase.
+Provider-specific screening questions will be added next. No submission occurs automatically in this phase.
 
 ## Phase B: one-click approved submission
 
