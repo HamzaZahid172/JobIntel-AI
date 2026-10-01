@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import logging
 import secrets
@@ -15,6 +16,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .ats_collectors import PROVIDER_SOURCE, sync_configured_ats
 from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
 from .auth import (
     claim_legacy_workspace,
@@ -35,12 +37,14 @@ from .intelligence import (
     profile_role_families,
     rank_cv_skills,
 )
-from .models import Application, CVProfile, Job, LiveJob, User
+from .models import Application, CVProfile, CollectorTarget, Job, LiveJob, User
 from .schemas import (
     ApplicationCreate,
     ApplicationOut,
     ApplicationUpdate,
     AssistantRequest,
+    BulkJobImport,
+    CollectorTargetCreate,
     LoginRequest,
     ManualJobImport,
     MatchRequest,
@@ -202,7 +206,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="JobIntel AI API", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="JobIntel AI API", version="0.6.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -215,7 +219,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.5.0"}
+    return {"status": "ok", "version": "0.6.0"}
 
 
 @app.post("/api/auth/register")
@@ -288,12 +292,16 @@ def sources(user: User = Depends(get_current_user)):
         "active": [
             {"name": "Arbeitnow", "mode": "Public API", "status": "active"},
             {"name": "Jobicy", "mode": "Public API", "status": "active"},
-            {"name": "Manual Import", "mode": "URL + description", "status": "active"},
+            {"name": "Lever", "mode": "Public employer postings", "status": "configurable"},
+            {"name": "SmartRecruiters", "mode": "Public employer postings", "status": "configurable"},
+            {"name": "Ashby", "mode": "Public Job Postings API", "status": "configurable"},
+            {"name": "Manual / Bulk Import", "mode": "Normalized external jobs", "status": "active"},
         ],
         "planned": [
-            {"name": "Direct employer ATS", "mode": "Greenhouse / Lever / SmartRecruiters / Teamtailor", "status": "planned"},
-            {"name": "XING", "mode": "Authorized integration only", "status": "restricted"},
-            {"name": "StepStone", "mode": "Authorized integration only", "status": "restricted"},
+            {"name": "Additional ATS adapters", "mode": "More official/public employer feeds", "status": "planned"},
+            {"name": "Apply Queue", "mode": "Human-approved application automation", "status": "architecture-ready"},
+            {"name": "XING", "mode": "Authorized integration or manual import only", "status": "restricted"},
+            {"name": "StepStone", "mode": "Authorized integration or manual import only", "status": "restricted"},
         ],
     }
 
@@ -323,9 +331,12 @@ def sync_jobs(
     db: Session = Depends(get_db),
 ):
     result = sync_current_jobs(db, force=force)
+    ats_result = sync_configured_ats(db, user.id)
     return {
         **result,
-        "message": "Current public job feeds refreshed and stored in PostgreSQL.",
+        "ats_collectors": ats_result,
+        "stored": db.query(LiveJob).count(),
+        "message": "Public feeds and configured employer ATS collectors refreshed.",
         "synced_at": datetime.utcnow().isoformat(),
     }
 
@@ -418,6 +429,165 @@ async def create_cover_letter(
             "X-JobIntel-Generator": generator_mode,
         },
     )
+
+
+@app.post("/api/jobs/bulk-import")
+def bulk_import_jobs(
+    payload: BulkJobImport,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if len(payload.jobs) > 500:
+        raise HTTPException(400, "A bulk import is limited to 500 jobs per request.")
+
+    imported = 0
+    updated = 0
+    for row in payload.jobs:
+        source = row.source.strip() or "External Collector"
+        raw_key = "|".join([source, row.url.strip(), row.title.strip(), row.company.strip()])
+        source_id = "external-" + hashlib.sha256(raw_key.encode()).hexdigest()[:24]
+        existing = (
+            db.query(LiveJob)
+            .filter(LiveJob.source == source, LiveJob.source_id == source_id)
+            .first()
+        )
+        values = {
+            "title": row.title.strip(),
+            "company": row.company.strip(),
+            "location": row.location.strip() or "Germany",
+            "remote": row.remote,
+            "url": row.url.strip(),
+            "description": row.description.strip(),
+            "skills": ",".join(extract_skills(row.title + " " + row.description)),
+            "job_types": "",
+            "match_score": None,
+            "posted_at": datetime.utcnow(),
+            "fetched_at": datetime.utcnow(),
+        }
+        if existing:
+            for key, value in values.items():
+                setattr(existing, key, value)
+            updated += 1
+        else:
+            db.add(LiveJob(source=source, source_id=source_id, **values))
+            imported += 1
+
+    db.commit()
+    return {
+        "imported": imported,
+        "updated": updated,
+        "stored": db.query(LiveJob).count(),
+        "message": "Collector output normalized into JobIntel.",
+    }
+
+
+@app.get("/api/collector-targets")
+def collector_targets(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(CollectorTarget)
+        .filter(CollectorTarget.user_id == user.id)
+        .order_by(CollectorTarget.created_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": row.id,
+            "provider": row.provider,
+            "identifier": row.identifier,
+            "label": row.label,
+            "enabled": row.enabled,
+        }
+        for row in rows
+    ]
+
+
+@app.post("/api/collector-targets")
+def add_collector_target(
+    payload: CollectorTargetCreate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    provider = payload.provider.strip().lower()
+    supported = {"lever", "lever-eu", "smartrecruiters", "ashby"}
+    if provider not in supported:
+        raise HTTPException(
+            400,
+            "Supported providers: lever, lever-eu, smartrecruiters, ashby.",
+        )
+
+    identifier = payload.identifier.strip().strip("/")
+    if provider == "ashby" and "jobs.ashbyhq.com/" in identifier:
+        identifier = identifier.split("jobs.ashbyhq.com/", 1)[1].split("/", 1)[0]
+    if not identifier:
+        raise HTTPException(400, "Company/job-board identifier is required.")
+
+    existing = (
+        db.query(CollectorTarget)
+        .filter(
+            CollectorTarget.user_id == user.id,
+            CollectorTarget.provider == provider,
+            CollectorTarget.identifier == identifier,
+        )
+        .first()
+    )
+    if existing:
+        existing.label = payload.label.strip() or identifier
+        existing.enabled = payload.enabled
+        db.commit()
+        db.refresh(existing)
+        row = existing
+    else:
+        row = CollectorTarget(
+            user_id=user.id,
+            provider=provider,
+            identifier=identifier,
+            label=payload.label.strip() or identifier,
+            enabled=payload.enabled,
+        )
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+
+    return {
+        "id": row.id,
+        "provider": row.provider,
+        "identifier": row.identifier,
+        "label": row.label,
+        "enabled": row.enabled,
+    }
+
+
+@app.delete("/api/collector-targets/{target_id}")
+def delete_collector_target(
+    target_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    row = (
+        db.query(CollectorTarget)
+        .filter(
+            CollectorTarget.id == target_id,
+            CollectorTarget.user_id == user.id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(404, "Collector target not found.")
+
+    source = PROVIDER_SOURCE.get(row.provider.lower())
+    if source:
+        prefix = row.identifier + ":"
+        db.query(LiveJob).filter(
+            LiveJob.source == source,
+            LiveJob.source_id.like(prefix + "%"),
+        ).delete(synchronize_session=False)
+
+    db.delete(row)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/applications", response_model=list[ApplicationOut])
