@@ -189,7 +189,18 @@ def build_match_report(
         row for row in language_requirements
         if row.get("required") and not _cv_mentions_language(cv_text, row["language"])
     ]
-    language_score = 100 if not missing_languages else 35
+    hard_language_gaps = [
+        row for row in missing_languages
+        if row.get("language", "").lower() != "english"
+    ]
+    if hard_language_gaps:
+        language_score = 35
+    elif missing_languages:
+        # An English-language CV/job context is useful evidence even when the CV
+        # does not explicitly contain a language section.
+        language_score = 80
+    else:
+        language_score = 100
 
     location_score, location_reason = _location_score(location, remote)
 
@@ -207,9 +218,9 @@ def build_match_report(
         hard_blockers.append("Role family does not align with the current CV profile.")
     if required and required_score < 35:
         hard_blockers.append("Too many core technical requirements are missing.")
-    if missing_languages:
+    if hard_language_gaps:
         hard_blockers.append(
-            "A required language is not clearly evidenced in the uploaded CV."
+            "A required non-English language is not clearly evidenced in the uploaded CV."
         )
 
     if hard_blockers:
