@@ -17,17 +17,46 @@ services:
     ports:
       - "5433:5432"
 
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  ollama-init:
+    image: ollama/ollama:latest
+    restart: "no"
+    depends_on:
+      ollama:
+        condition: service_started
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until ollama list >/dev/null 2>&1; do
+          echo "Waiting for Ollama server..."
+          sleep 2
+        done
+        echo "Ensuring model ${OLLAMA_MODEL} is available..."
+        ollama pull "${OLLAMA_MODEL}"
+
   backend:
     build: ./backend
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://jobintel:jobintel@db:5432/jobintel}
-      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2:3b}
-      USE_OLLAMA: ${USE_OLLAMA:-false}
+      USE_OLLAMA: ${USE_OLLAMA:-true}
     depends_on:
       db:
         condition: service_healthy
+      ollama:
+        condition: service_started
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
       interval: 10s
@@ -81,4 +110,5 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:
   clickhouse_data:
