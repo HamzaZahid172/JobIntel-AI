@@ -15,9 +15,7 @@ services:
       retries: 20
       start_period: 5s
     ports:
-      - "5432:5432"
-    networks:
-      - jobintel
+      - "5433:5432"
 
   backend:
     build: ./backend
@@ -37,23 +35,16 @@ services:
       retries: 10
       start_period: 10s
     ports:
-      - "8000:8000"
-    networks:
-      - jobintel
+      - "8100:8000"
 
   frontend:
-    build:
-      context: ./frontend
-      args:
-        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    build: ./frontend
     restart: unless-stopped
     depends_on:
       backend:
         condition: service_healthy
     ports:
-      - "3000:80"
-    networks:
-      - jobintel
+      - "3100:80"
 
   redpanda:
     image: redpandadata/redpanda:v24.2.18
@@ -75,27 +66,19 @@ services:
       - --advertise-kafka-addr
       - PLAINTEXT://redpanda:9092
     ports:
-      - "9092:9092"
+      - "19092:9092"
     profiles: ["data"]
-    networks:
-      - jobintel
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8-alpine
     restart: unless-stopped
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "18123:8123"
+      - "19000:9000"
     volumes:
       - clickhouse_data:/var/lib/clickhouse
     profiles: ["data"]
-    networks:
-      - jobintel
 
 volumes:
   postgres_data:
   clickhouse_data:
-
-networks:
-  jobintel:
-    driver: bridge
