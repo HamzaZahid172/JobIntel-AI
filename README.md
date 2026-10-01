@@ -170,3 +170,21 @@ Open:
 - API docs: http://localhost:8100/docs
 
 The first backend startup may take a little longer because it performs an initial live-job sync when the local live-jobs table is empty.
+
+
+## CV-first job filtering
+
+After a CV is uploaded, JobIntel no longer ranks the dashboard from the whole market indiscriminately.
+
+It builds a profile from the CV, including:
+
+- strongest programming languages and tools,
+- repeated skill evidence,
+- target role families such as Software/Backend, QA Automation, Data Engineering, Frontend/Full-stack and DevOps/Platform,
+- ATS readiness.
+
+The dashboard then filters current jobs using both **role relevance** and **skill overlap**. Generic sales, account-management, product-management and finance/analyst roles are prevented from receiving high match scores merely because their descriptions mention APIs or data.
+
+The **Your Top Skills + Current Demand** card is CV-first. It shows how strongly a skill appears in the uploaded CV and how often that same skill appears in the current CV-relevant job set.
+
+The ATS score is generic readiness and is capped below 100 by design. Job-specific compatibility is reported separately in the Best Current Matches section.

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from sqlalchemy.orm import Session
 
-from .intelligence import extract_skills, match_cv_to_job
+from .intelligence import extract_skills, is_target_technical_role, match_cv_to_job
 from .models import CVProfile, LiveJob
 
 logger = logging.getLogger("jobintel.sources")
@@ -48,8 +48,10 @@ def strip_html(value: str | None) -> str:
 
 
 def relevant_role(title: str, description: str = "") -> bool:
-    haystack = f" {title} {description[:4000]} ".lower()
-    return any(term in haystack for term in ROLE_TERMS)
+    # Title-first technical-role filtering prevents generic sales/product/finance
+    # listings from entering the candidate pool merely because the description
+    # mentions APIs, data or software.
+    return is_target_technical_role(title, description)
 
 
 def germany_relevant(location: str, remote: bool, url: str = "") -> bool:
@@ -80,7 +82,7 @@ def latest_cv(db: Session) -> CVProfile | None:
 def _score(cv: CVProfile | None, title: str, description: str) -> float | None:
     if not cv:
         return None
-    return float(match_cv_to_job(cv.text, f"{title}\n{description}")["overall_score"])
+    return float(match_cv_to_job(cv.text, description, title)["overall_score"])
 
 
 def fetch_arbeitnow(client: httpx.Client, pages: int = 3) -> list[dict]:

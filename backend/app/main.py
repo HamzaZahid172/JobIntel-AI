@@ -2,7 +2,7 @@ import json
 import logging
 from collections import Counter
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from io import BytesIO
 
 from docx import Document
@@ -19,6 +19,8 @@ from .intelligence import (
     extract_skills,
     improvement_suggestions,
     match_cv_to_job,
+    profile_role_families,
+    rank_cv_skills,
 )
 from .models import Application, CVProfile, Job, LiveJob
 from .schemas import (
@@ -34,13 +36,11 @@ logger = logging.getLogger("jobintel")
 
 
 def cleanup_legacy_demo_data(db: Session) -> None:
-    """Remove only the exact starter demo rows from early JobIntel builds."""
     apps = db.query(Application).all()
     demo_companies = {"SAP", "Bosch", "Example GmbH"}
     if apps and len(apps) <= 3 and {a.company for a in apps}.issubset(demo_companies):
         for app in apps:
             db.delete(app)
-    # The legacy jobs table is no longer used by the dashboard.
     db.query(Job).delete()
     db.commit()
 
@@ -58,7 +58,21 @@ def extract_document_text(filename: str, raw: bytes) -> str:
     raise HTTPException(400, "Upload a PDF, DOCX or TXT CV.")
 
 
-def serialize_job(job: LiveJob) -> dict:
+def refresh_cv_analysis(db: Session, cv: CVProfile) -> dict:
+    result = ats_check(cv.text)
+    cv.skills = ",".join(result["skills_detected"])
+    cv.ats_score = result["score"]
+    cv.ats_status = result["status"]
+    cv.ats_json = json.dumps(result)
+    db.commit()
+    return result
+
+
+def match_details(cv: CVProfile, job: LiveJob) -> dict:
+    return match_cv_to_job(cv.text, job.description, job.title)
+
+
+def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
     return {
         "id": job.id,
         "source": job.source,
@@ -70,10 +84,46 @@ def serialize_job(job: LiveJob) -> dict:
         "url": job.url,
         "skills": [s for s in job.skills.split(",") if s],
         "job_types": [s for s in job.job_types.split(",") if s],
-        "match": job.match_score,
+        "match": details["overall_score"] if details else job.match_score,
+        "role_score": details["role_score"] if details else None,
+        "matched_skills": details["matched_skills"] if details else [],
+        "missing_skills": details["missing_skills"] if details else [],
+        "job_role_families": details["job_role_families"] if details else [],
         "posted_at": job.posted_at.isoformat() if job.posted_at else None,
         "fetched_at": job.fetched_at.isoformat() if job.fetched_at else None,
     }
+
+
+def candidate_job_records(cv: CVProfile | None, jobs: list[LiveJob]) -> list[tuple[LiveJob, dict | None]]:
+    if not cv:
+        return [(job, None) for job in jobs]
+
+    strongest = {item["skill"] for item in rank_cv_skills(cv.text, limit=10)}
+    records: list[tuple[LiveJob, dict]] = []
+
+    for job in jobs:
+        details = match_details(cv, job)
+        job_skills = set(details["job_skills"])
+        strong_overlap = strongest & job_skills
+
+        # Candidate jobs need both role relevance and evidence from the CV.
+        # This removes generic sales/product/finance jobs that happen to mention APIs/data.
+        if details["role_score"] < 45:
+            continue
+        if not strong_overlap and len(details["matched_skills"]) < 2:
+            continue
+
+        records.append((job, details))
+
+    records.sort(
+        key=lambda row: (
+            row[1]["overall_score"],
+            row[1]["role_score"],
+            row[0].posted_at or datetime.min,
+        ),
+        reverse=True,
+    )
+    return records
 
 
 def build_skill_gap(cv: CVProfile | None, jobs: list[LiveJob]) -> list[dict]:
@@ -81,11 +131,12 @@ def build_skill_gap(cv: CVProfile | None, jobs: list[LiveJob]) -> list[dict]:
         return []
     cv_skills = set(extract_skills(cv.text))
     missing = Counter()
-    for job in jobs[:60]:
+    for job in jobs[:80]:
         for skill in [s for s in job.skills.split(",") if s]:
             if skill not in cv_skills:
                 missing[skill] += 1
-    suggestions = improvement_suggestions([s for s, _ in missing.most_common(8)])
+
+    suggestions = improvement_suggestions([s for s, _ in missing.most_common(10)])
     for suggestion in suggestions:
         key = suggestion["skill"].lower()
         suggestion["market_count"] = missing.get(key, 0)
@@ -96,6 +147,7 @@ def application_performance(apps: list[Application]) -> list[dict]:
     grouped: dict[str, list[Application]] = {}
     for app in apps:
         grouped.setdefault(app.cv_version or "Current CV", []).append(app)
+
     result = []
     positive = {"Interview", "Final", "Offer"}
     for label, rows in grouped.items():
@@ -120,12 +172,17 @@ async def lifespan(app: FastAPI):
                 sync_current_jobs(db)
             except Exception:
                 logger.exception("Initial live-job sync failed; app will start with an empty market.")
+
+        cv = latest_cv(db)
+        if cv:
+            refresh_cv_analysis(db, cv)
+            rescore_jobs(db, cv)
     finally:
         db.close()
     yield
 
 
-app = FastAPI(title="JobIntel AI API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="JobIntel AI API", version="0.3.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -137,26 +194,26 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.2.0"}
+    return {"status": "ok", "version": "0.3.0"}
 
 
 @app.get("/api/jobs")
 def jobs(limit: int = 100, db: Session = Depends(get_db)):
     cv = latest_cv(db)
-    query = db.query(LiveJob)
-    if cv:
-        query = query.order_by(LiveJob.match_score.desc().nullslast(), LiveJob.posted_at.desc().nullslast())
-    else:
-        query = query.order_by(LiveJob.posted_at.desc().nullslast())
-    return [serialize_job(job) for job in query.limit(min(max(limit, 1), 300)).all()]
+    live_jobs = db.query(LiveJob).order_by(LiveJob.posted_at.desc().nullslast()).all()
+    records = candidate_job_records(cv, live_jobs)
+    return [serialize_job(job, details) for job, details in records[: min(max(limit, 1), 300)]]
 
 
 @app.post("/api/jobs/sync")
 def sync_jobs(db: Session = Depends(get_db)):
     result = sync_current_jobs(db)
+    cv = latest_cv(db)
+    if cv:
+        rescore_jobs(db, cv)
     return {
         **result,
-        "message": "Current job feeds refreshed and stored in PostgreSQL.",
+        "message": "Current job feeds refreshed, filtered and stored in PostgreSQL.",
         "synced_at": datetime.utcnow().isoformat(),
     }
 
@@ -196,13 +253,19 @@ def get_cv(db: Session = Depends(get_db)):
     cv = latest_cv(db)
     if not cv:
         return {"uploaded": False}
-    details = json.loads(cv.ats_json or "{}")
+
+    details = refresh_cv_analysis(db, cv)
+    relevant = candidate_job_records(cv, db.query(LiveJob).all())
+    top_skills = rank_cv_skills(cv.text, [job.skills for job, _ in relevant], limit=10)
+
     return {
         "uploaded": True,
         "id": cv.id,
         "filename": cv.filename,
         "uploaded_at": cv.uploaded_at.isoformat(),
         "skills": [s for s in cv.skills.split(",") if s],
+        "top_skills": top_skills,
+        "role_families": profile_role_families(cv.text),
         "ats": details,
     }
 
@@ -236,7 +299,7 @@ async def upload_cv(file: UploadFile = File(...), db: Session = Depends(get_db))
         "filename": profile.filename,
         "ats": result,
         "jobs_rescored": rescored,
-        "message": "CV saved locally and all current jobs were rescored.",
+        "message": "CV saved locally. Current jobs were filtered and rescored against your profile.",
     }
 
 
@@ -254,11 +317,7 @@ def match(payload: MatchRequest):
 
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db)):
-    live_jobs = (
-        db.query(LiveJob)
-        .order_by(LiveJob.match_score.desc().nullslast(), LiveJob.posted_at.desc().nullslast())
-        .all()
-    )
+    all_jobs = db.query(LiveJob).order_by(LiveJob.posted_at.desc().nullslast()).all()
     apps = db.query(Application).order_by(Application.created_at.desc()).all()
     cv = latest_cv(db)
 
@@ -266,24 +325,32 @@ def dashboard(db: Session = Depends(get_db)):
     counts = {status: sum(1 for app in apps if app.status == status) for status in statuses}
     interview_count = counts["Interview"] + counts["Final"] + counts["Offer"]
 
+    records = candidate_job_records(cv, all_jobs)
+    relevant_jobs = [job for job, _ in records]
+
     today = date.today()
-    new_today = sum(1 for job in live_jobs if job.posted_at and job.posted_at.date() == today)
-    top_skills = aggregate_skills([job.skills for job in live_jobs])
+    new_today = sum(1 for job in relevant_jobs if job.posted_at and job.posted_at.date() == today)
 
     if cv:
-        matches = [serialize_job(job) for job in live_jobs if job.match_score is not None][:5]
-        ats = json.loads(cv.ats_json or "{}")
-        readiness_score = round(sum((j.match_score or 0) for j in live_jobs[:5]) / max(1, min(5, len(live_jobs))))
-        readiness_level = "High" if readiness_score >= 80 else "Medium" if readiness_score >= 65 else "Developing"
+        ats = refresh_cv_analysis(db, cv)
+        top_skills = rank_cv_skills(cv.text, [job.skills for job in relevant_jobs], limit=10)
+        matches = [serialize_job(job, details) for job, details in records[:5]]
+        top_scores = [details["overall_score"] for _, details in records[:5]]
+        readiness_score = round(sum(top_scores) / len(top_scores)) if top_scores else 0
+        readiness_level = "Strong" if readiness_score >= 80 else "Good" if readiness_score >= 65 else "Developing"
+        role_families = profile_role_families(cv.text)
     else:
-        matches = [serialize_job(job) for job in live_jobs[:5]]
         ats = None
+        top_skills = []
+        matches = [serialize_job(job) for job in all_jobs[:5]]
         readiness_score = 0
         readiness_level = "Upload CV"
+        role_families = []
 
-    last_sync = max((job.fetched_at for job in live_jobs if job.fetched_at), default=None)
-    source_counts = Counter(job.source for job in live_jobs)
-    gaps = build_skill_gap(cv, live_jobs)
+    last_sync = max((job.fetched_at for job in all_jobs if job.fetched_at), default=None)
+    all_source_counts = Counter(job.source for job in all_jobs)
+    relevant_source_counts = Counter(job.source for job in relevant_jobs)
+    gaps = build_skill_gap(cv, relevant_jobs)
     performance = application_performance(apps)
 
     followups = []
@@ -302,23 +369,24 @@ def dashboard(db: Session = Depends(get_db)):
     if not cv:
         suggestions.append({
             "title": "Upload your CV",
-            "detail": "JobIntel needs your CV before it can calculate real ATS readiness and job-match scores.",
+            "detail": "JobIntel needs your CV before it can rank your skills and filter jobs to your profile.",
         })
     else:
         for gap in gaps[:3]:
             suggestions.append({
                 "title": f"Improve {gap['skill']}",
-                "detail": f"Seen in {gap.get('market_count', 0)} current tracked roles. {gap['action']}",
+                "detail": f"Seen in {gap.get('market_count', 0)} CV-relevant jobs. {gap['action']}",
             })
         if not suggestions:
             suggestions.append({
-                "title": "Your tracked market gaps are small",
-                "detail": "Focus on tailoring your strongest project evidence to the highest-match roles.",
+                "title": "Your current skill overlap is strong",
+                "detail": "Focus on tailoring project evidence and keywords to each high-match vacancy.",
             })
 
     return {
         "summary": {
-            "active_jobs": len(live_jobs),
+            "active_jobs": len(relevant_jobs) if cv else len(all_jobs),
+            "total_market_jobs": len(all_jobs),
             "new_today": new_today,
             "applications": len(apps),
             "interviews": interview_count,
@@ -327,8 +395,15 @@ def dashboard(db: Session = Depends(get_db)):
         },
         "market": {
             "last_sync": last_sync.isoformat() if last_sync else None,
-            "sources": dict(source_counts),
-            "live": bool(live_jobs),
+            "sources": dict(relevant_source_counts if cv else all_source_counts),
+            "all_sources": dict(all_source_counts),
+            "live": bool(all_jobs),
+            "total_jobs": len(all_jobs),
+            "relevant_jobs": len(relevant_jobs) if cv else len(all_jobs),
+        },
+        "profile": {
+            "top_skills": top_skills,
+            "role_families": role_families,
         },
         "cv": {
             "uploaded": bool(cv),
@@ -337,7 +412,7 @@ def dashboard(db: Session = Depends(get_db)):
             "ats": ats,
         },
         "matches": matches,
-        "top_skills": top_skills,
+        "top_skills": top_skills if cv else aggregate_skills([job.skills for job in all_jobs]),
         "pipeline": counts,
         "performance": performance,
         "skill_gap": gaps,
@@ -350,15 +425,19 @@ def dashboard(db: Session = Depends(get_db)):
 @app.post("/api/assistant")
 async def assistant(payload: AssistantRequest, db: Session = Depends(get_db)):
     cv = latest_cv(db)
-    jobs = db.query(LiveJob).order_by(LiveJob.match_score.desc().nullslast()).limit(20).all()
+    all_jobs = db.query(LiveJob).all()
+    records = candidate_job_records(cv, all_jobs)
+    relevant_jobs = [job for job, _ in records]
+
     context = {
         "cv_uploaded": bool(cv),
         "applications": db.query(Application).count(),
-        "tracked_live_jobs": db.query(LiveJob).count(),
+        "tracked_live_jobs": len(relevant_jobs) if cv else len(all_jobs),
+        "top_profile_skills": [item["skill"] for item in rank_cv_skills(cv.text, limit=8)] if cv else [],
         "top_matches": [
-            {"title": j.title, "company": j.company, "match": j.match_score}
-            for j in jobs[:5]
+            {"title": job.title, "company": job.company, "match": details["overall_score"]}
+            for job, details in records[:5] if details
         ],
-        "top_missing_skills": [g["skill"] for g in build_skill_gap(cv, jobs)],
+        "top_missing_skills": [gap["skill"] for gap in build_skill_gap(cv, relevant_jobs)],
     }
     return {"answer": await answer(payload.message, context)}
