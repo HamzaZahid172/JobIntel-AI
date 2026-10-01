@@ -1,4 +1,4 @@
-const API = localStorage.getItem('jobintel_api') || 'http://localhost:8000';
+const API = localStorage.getItem('jobintel_api') || 'http://localhost:8100';
 const nav = ['⌂ Dashboard','▣ Job Market','▤ My Applications','▤ ATS CV Check','♡ Matches','▥ Skill Gap','▧ Analytics','⚙ Settings'];
 document.querySelector('#nav').innerHTML=nav.map((n,i)=>`<div class="nav ${i===0?'active':''}">${n}</div>`).join('');
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
