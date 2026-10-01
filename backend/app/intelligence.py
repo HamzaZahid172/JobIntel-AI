@@ -71,7 +71,9 @@ ATS_SECTIONS = ["experience", "education", "skills", "projects"]
 
 
 def _skill_pattern(skill: str) -> str:
-    return rf"(?<![\w.]){re.escape(skill)}(?![\w.])"
+    # Use word-character boundaries only. Treating "." as a forbidden boundary
+    # caused skills at sentence endings (for example "Airflow.") to be missed.
+    return rf"(?<!\w){re.escape(skill)}(?!\w)"
 
 
 def extract_skills(text: str) -> list[str]:
