@@ -57,3 +57,41 @@ The current **Interview Readiness** score is a decision-support heuristic. A tru
 ## Architecture and roadmap
 
 See `docs/ARCHITECTURE.md` and `docs/ROADMAP.md`.
+
+
+## Troubleshooting Docker Desktop
+
+If you previously started an older version of the stack and the backend shows a PostgreSQL error such as:
+
+```text
+Temporary failure in name resolution
+```
+
+pull the latest code and recreate the Compose network/containers:
+
+```bash
+git pull origin main
+docker compose down --remove-orphans
+docker compose up --build --force-recreate
+```
+
+For the optional Redpanda + ClickHouse profile:
+
+```bash
+docker compose --profile data down --remove-orphans
+docker compose --profile data up --build --force-recreate
+```
+
+Check that the API is healthy:
+
+```bash
+curl http://localhost:8000/health
+```
+
+Expected output:
+
+```json
+{"status":"ok"}
+```
+
+The backend now retries database connectivity during startup, so a transient Docker Desktop DNS delay will not immediately terminate the API.
