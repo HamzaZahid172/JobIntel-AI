@@ -13,6 +13,7 @@ const navItems = [
 let currentUser = null;
 let currentRoute = 'dashboard';
 let jobMarketCache = [];
+let assistantStatusTimer = null;
 
 function renderNav(){
   document.querySelector('#nav').innerHTML = navItems.map(function(item){
@@ -309,6 +310,9 @@ async function boot(){
     renderNav();
     await routeTo(currentRoute, false);
     updateAssistantStatus();
+    if(!assistantStatusTimer){
+      assistantStatusTimer = setInterval(updateAssistantStatus, 10000);
+    }
   }catch(err){
     showAuth(err.message);
   }
@@ -423,39 +427,33 @@ async function downloadCoverLetter(jobId, button){
   button.textContent = 'Generating cover letter…';
 
   try{
-    const token = localStorage.getItem('jobintel_token');
-    const response = await fetch(API + '/api/jobs/' + jobId + '/cover-letter.docx', {
-      method: 'POST',
-      headers: {
-        Authorization: 'Bearer ' + token
-      }
+    const payload = await apiFetch('/api/jobs/' + jobId + '/cover-letter', {
+      method: 'POST'
     });
 
-    if(!response.ok){
-      let message = 'Cover letter generation failed.';
-      try{
-        const body = await response.json();
-        message = body.detail || body.message || message;
-      }catch{}
-      throw new Error(message);
+    if(!payload.content_base64){
+      throw new Error('The generated document was empty.');
     }
 
-    const blob = await response.blob();
-    const disposition = response.headers.get('Content-Disposition') || '';
-    const filenameMatch = disposition.match(/filename="?([^";]+)"?/i);
-    const filename = filenameMatch ? filenameMatch[1] : 'JobIntel_Cover_Letter.docx';
+    const binary = atob(payload.content_base64);
+    const bytes = new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
 
+    const blob = new Blob(
+      [bytes],
+      {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
+    );
     const downloadUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = downloadUrl;
-    link.download = filename;
+    link.download = payload.filename || 'JobIntel_Cover_Letter.docx';
     document.body.appendChild(link);
     link.click();
     link.remove();
+    setTimeout(function(){ URL.revokeObjectURL(downloadUrl); }, 1500);
 
-    setTimeout(function(){ URL.revokeObjectURL(downloadUrl); }, 1000);
-    button.textContent = 'Downloaded ✓';
-    setTimeout(function(){ button.textContent = originalText; }, 1600);
+    button.textContent = payload.generator === 'ollama' ? 'AI letter downloaded ✓' : 'Letter downloaded ✓';
+    setTimeout(function(){ button.textContent = originalText; }, 1800);
   }catch(err){
     alert('Cover letter could not be created: ' + err.message);
     button.textContent = originalText;
@@ -580,7 +578,20 @@ async function updateAssistantStatus(){
   try{
     const status=await apiFetch('/api/assistant/status');
     const el=document.querySelector('#assistantMode');
-    if(el) el.textContent=status.ollama_online?'● Ollama · '+status.model:'● Rules fallback';
+    if(!el) return;
+    if(status.state==='ready'){
+      el.textContent='● Ollama · ' + status.model;
+      el.title='Local Ollama model is ready.';
+    }else if(status.state==='model_downloading'){
+      el.textContent='● Ollama model downloading…';
+      el.title='Ollama server is running, but the model is still being downloaded.';
+    }else if(status.state==='server_offline'){
+      el.textContent='● Ollama starting…';
+      el.title='Waiting for the local Ollama container.';
+    }else{
+      el.textContent='● Rules fallback';
+      el.title='Ollama is disabled.';
+    }
   }catch{}
 }
 
