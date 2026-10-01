@@ -299,3 +299,12 @@ POST  /api/application-packages/{package_id}/cover-letter
 ```
 
 See `docs/MATCH_AND_PREPARATION.md` and `docs/ARCHITECTURE.md`.
+
+
+## v0.7.1 Analytics + source visibility fix
+
+Analytics now distinguishes **supported/configurable sources** from sources that currently have stored jobs. Arbeitnow, Jobicy, Ashby, Lever and SmartRecruiters are always visible in source analytics, including zero-job and not-configured states.
+
+Skill Gap now uses the structured Match Layer's **missing required** and **missing preferred** skills instead of a flat extracted-keyword comparison.
+
+See `docs/V0.7.1_ANALYTICS_FIX_REPORT.md`.
