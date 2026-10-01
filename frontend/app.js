@@ -194,7 +194,7 @@ async function refreshJobs() {
   button.disabled = true;
   button.textContent = '↻ Refreshing…';
   try {
-    const result = await apiFetch('/api/jobs/sync', {method:'POST'});
+    const result = await apiFetch('/api/jobs/sync?force=true', {method:'POST'});
     const errorText = result.errors?.length ? ` Some sources reported: ${result.errors.join(', ')}` : '';
     alert(`Stored ${result.stored} current jobs. Your CV filter and match scores have been refreshed.${errorText}`);
     await load();

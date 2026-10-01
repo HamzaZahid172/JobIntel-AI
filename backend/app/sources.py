@@ -150,9 +150,9 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
     return jobs
 
 
-def sync_current_jobs(db: Session) -> dict:
+def sync_current_jobs(db: Session, force: bool = False) -> dict:
     last_job = db.query(LiveJob).order_by(LiveJob.fetched_at.desc()).first()
-    if last_job and datetime.utcnow() - last_job.fetched_at < MIN_SYNC_INTERVAL:
+    if not force and last_job and datetime.utcnow() - last_job.fetched_at < MIN_SYNC_INTERVAL:
         return {
             "stored": db.query(LiveJob).count(),
             "fetched": 0,
