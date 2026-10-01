@@ -9,10 +9,12 @@ from io import BytesIO
 from docx import Document
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
 from .auth import (
     claim_legacy_workspace,
     create_session,
@@ -206,6 +208,7 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-JobIntel-Generator"],
 )
 
 
@@ -355,6 +358,37 @@ def import_job(
     cv = latest_cv(db, user.id)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
+
+
+@app.post("/api/jobs/{job_id}/cover-letter.docx")
+async def create_cover_letter(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+
+    cv = latest_cv(db, user.id)
+    if not cv:
+        raise HTTPException(400, "Upload your CV before generating a cover letter.")
+
+    details = match_details(cv, job)
+    letter_text, generator_mode = await generate_cover_letter_text(cv.text, job, details, user)
+    content = build_cover_letter_docx(letter_text, user, job)
+    filename = safe_filename(
+        f"{user.display_name}_{job.company}_{job.title}_Cover_Letter"
+    ) + ".docx"
+
+    return StreamingResponse(
+        BytesIO(content),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-JobIntel-Generator": generator_mode,
+        },
+    )
 
 
 @app.get("/api/applications", response_model=list[ApplicationOut])
