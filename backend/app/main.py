@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 import secrets
@@ -358,6 +359,34 @@ def import_job(
     cv = latest_cv(db, user.id)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
+
+
+@app.post("/api/jobs/{job_id}/cover-letter")
+async def create_cover_letter_payload(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+
+    cv = latest_cv(db, user.id)
+    if not cv:
+        raise HTTPException(400, "Upload your CV before generating a cover letter.")
+
+    details = match_details(cv, job)
+    letter_text, generator_mode = await generate_cover_letter_text(cv.text, job, details, user)
+    content = build_cover_letter_docx(letter_text, user, job)
+    filename = safe_filename(
+        f"{user.display_name}_{job.company}_{job.title}_Cover_Letter"
+    ) + ".docx"
+
+    return {
+        "filename": filename,
+        "generator": generator_mode,
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    }
 
 
 @app.post("/api/jobs/{job_id}/cover-letter.docx")
