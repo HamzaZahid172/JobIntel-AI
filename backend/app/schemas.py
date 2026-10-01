@@ -71,3 +71,11 @@ class CollectorTargetCreate(BaseModel):
     identifier: str
     label: str
     enabled: bool = True
+
+
+class ApplicationPreparationRequest(BaseModel):
+    minimum_match: float = Field(70, ge=0, le=100)
+
+
+class ApplicationPackageAnswerUpdate(BaseModel):
+    answers: dict[str, str]
