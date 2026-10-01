@@ -208,3 +208,14 @@ The sidebar pages are functional:
 The Career Assistant reports whether it is using local **Ollama** or the deterministic fallback rules. Configure Ollama in `.env` with `USE_OLLAMA=true`.
 
 See `docs/DATA_SOURCES.md` for the XING/StepStone strategy. JobIntel does not automatically scrape those platforms without authorized access; individual jobs can be imported from the Job Market page.
+
+
+## v0.5 collectors + cover letters
+
+JobIntel can now add employer-specific **Lever** and **SmartRecruiters** posting collectors from Settings. These use official/public posting interfaces and feed the same PostgreSQL job pipeline.
+
+Existing external collectors can integrate through `POST /api/jobs/bulk-import`, so a Playwright collector can remain an isolated data-collection process instead of becoming part of the dashboard runtime.
+
+Every matched job now has **Create cover letter**. The backend uses the current CV plus the stored job description and downloads a tailored `.docx`. Ollama is used when enabled and reachable; otherwise a grounded deterministic template is generated.
+
+See `docs/COLLECTORS_AND_COVER_LETTERS.md`.

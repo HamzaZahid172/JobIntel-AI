@@ -40,3 +40,9 @@
 .policyNote{background:#fff9ed;border:1px solid #f1dfb9;padding:12px;border-radius:10px;color:#755b28;font-size:12px;line-height:1.5}
 .checkLabel{display:flex!important;grid-template-columns:auto 1fr!important;align-items:center;gap:8px!important}
 @media(max-width:1000px){.jobMarketGrid,.detailGrid,.analyticsGrid{grid-template-columns:1fr}.pageToolbar input{min-width:100%}}
+
+.collectorForm{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:12px 0 18px}.collectorForm label:nth-child(3){grid-column:1/-1}.collectorForm button{width:max-content}
+.codeSample{white-space:pre-wrap;word-break:break-word;background:#10213d;color:#eaf3ff;padding:12px;border-radius:10px;font-size:11px;line-height:1.5}
+.atsTargets{grid-column:1/-1}.atsTargets>p{color:#667b99;font-size:12px;line-height:1.5}
+.jobActions .coverLetterBtn{white-space:nowrap}
+@media(max-width:720px){.collectorForm{grid-template-columns:1fr}.collectorForm label:nth-child(3){grid-column:auto}.jobActions{align-items:stretch;flex-direction:column}.primaryLink{text-align:center}}

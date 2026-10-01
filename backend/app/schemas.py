@@ -60,3 +60,14 @@ class ManualJobImport(BaseModel):
     url: str = ""
     description: str
     remote: bool = False
+
+
+class BulkJobImport(BaseModel):
+    jobs: list[ManualJobImport]
+
+
+class CollectorTargetCreate(BaseModel):
+    provider: str
+    identifier: str
+    label: str
+    enabled: bool = True

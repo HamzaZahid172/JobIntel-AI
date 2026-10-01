@@ -199,7 +199,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="JobIntel AI API", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="JobIntel AI API", version="0.5.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -211,7 +211,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.4.0"}
+    return {"status": "ok", "version": "0.5.0"}
 
 
 @app.post("/api/auth/register")

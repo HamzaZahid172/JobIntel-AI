@@ -91,3 +91,15 @@ class Application(Base):
     applied_date: Mapped[date] = mapped_column(Date, default=date.today)
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CollectorTarget(Base):
+    __tablename__ = "collector_targets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    provider: Mapped[str] = mapped_column(String(40), index=True)
+    identifier: Mapped[str] = mapped_column(String(180))
+    label: Mapped[str] = mapped_column(String(180))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -105,6 +105,7 @@ async function load() {
         <small>${esc(m.company)} · ${esc(m.location)}</small>
         <div>${skills}${roles}<span class="sourceTag">${esc(m.source)}</span></div>
         ${m.url ? `<a class="applyBtn" href="${esc(m.url)}" target="_blank" rel="noopener">Apply on source ↗</a>` : ''}
+        <button class="secondary coverLetterBtn" data-job-id="${m.id}">Create cover letter</button>
       </div>
       ${score}
     </div>`;
@@ -196,6 +197,7 @@ async function load() {
 
   document.querySelector('#addApp').onclick = () => document.querySelector('#modal').classList.remove('hidden');
   document.querySelector('#uploadCv').onclick = uploadCv;
+  bindTrackButtons();
 }
 
 async function uploadCv() {
