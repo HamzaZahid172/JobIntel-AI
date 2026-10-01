@@ -224,9 +224,14 @@ async function refreshJobs() {
   button.textContent = '↻ Refreshing…';
   try {
     const result = await apiFetch('/api/jobs/sync?force=true', {method:'POST'});
-    const errorText = result.errors?.length ? ` Some sources reported: ${result.errors.join(', ')}` : '';
-    alert(`Stored ${result.stored} current jobs. Your CV filter and match scores have been refreshed.${errorText}`);
-    await load();
+    const publicErrors = result.errors?.length ? result.errors : [];
+    const atsErrors = result.ats_collectors?.errors?.length ? result.ats_collectors.errors : [];
+    const allErrors = publicErrors.concat(atsErrors);
+    const atsCount = result.ats_collectors?.fetched || 0;
+    const errorText = allErrors.length ? ` Some sources reported: ${allErrors.join(', ')}` : '';
+    alert(`Stored ${result.stored} current jobs. Employer ATS added/refreshed ${atsCount} jobs.${errorText}`);
+    if(currentRoute === 'dashboard') await load();
+    if(currentRoute === 'job-market') await renderJobMarket(false);
   } catch (err) {
     alert(`Job refresh failed: ${err.message}`);
   } finally {
@@ -560,15 +565,83 @@ async function renderAnalyticsPage(){
 async function renderSettingsPage(){
   const sources=await apiFetch('/api/sources');
   const status=await apiFetch('/api/assistant/status');
-  document.querySelector('#pageContent').innerHTML='<div class="detailGrid"><form id="profileForm" class="card detailPage"><h2>Profile</h2><label>Name<input name="display_name" value="'+esc(currentUser.display_name)+'"></label><label>Email<input disabled value="'+esc(currentUser.email)+'"></label><label>Target roles<textarea name="target_roles" rows="3">'+esc(currentUser.target_roles||'')+'</textarea></label><label>Target locations<textarea name="target_locations" rows="2">'+esc(currentUser.target_locations||'')+'</textarea></label><button class="primary" type="submit">Save profile</button><button id="logoutButton" class="dangerButton" type="button">Logout</button></form><div class="card detailPage"><h2>Career Assistant</h2><p>Mode: <b>'+esc(status.mode)+'</b></p><p>Ollama: '+(status.ollama_online?'Online':'Offline / fallback rules')+'</p><p>Model: '+esc(status.model)+'</p><h2>Job sources</h2>'+sources.active.map(function(s){return '<div class="sourceRow"><b>'+esc(s.name)+'</b><span class="pill good">'+esc(s.status)+'</span><small>'+esc(s.mode)+'</small></div>';}).join('')+'<h3>Planned / restricted</h3>'+sources.planned.map(function(s){return '<div class="sourceRow"><b>'+esc(s.name)+'</b><span class="pill warn">'+esc(s.status)+'</span><small>'+esc(s.mode)+'</small></div>';}).join('')+'<p class="policyNote">XING and StepStone are intentionally not scraped automatically. Import individual jobs manually unless you obtain authorized integration access.</p></div></div>';
-  document.querySelector('#profileForm').onsubmit=async function(e){
-    e.preventDefault(); const data=Object.fromEntries(new FormData(e.target).entries());
-    currentUser=await apiFetch('/api/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-    showApp(); alert('Profile saved.');
-  };
-  document.querySelector('#logoutButton').onclick=logout;
-}
+  const targets=await apiFetch('/api/collector-targets');
 
+  document.querySelector('#pageContent').innerHTML=
+    '<div class="detailGrid">' +
+      '<form id="profileForm" class="card detailPage">' +
+        '<h2>Profile</h2>' +
+        '<label>Name<input name="display_name" value="'+esc(currentUser.display_name)+'"></label>' +
+        '<label>Email<input disabled value="'+esc(currentUser.email)+'"></label>' +
+        '<label>Target roles<textarea name="target_roles" rows="3">'+esc(currentUser.target_roles||'')+'</textarea></label>' +
+        '<label>Target locations<textarea name="target_locations" rows="2">'+esc(currentUser.target_locations||'')+'</textarea></label>' +
+        '<button class="primary" type="submit">Save profile</button>' +
+        '<button id="logoutButton" class="dangerButton" type="button">Logout</button>' +
+      '</form>' +
+      '<div class="card detailPage">' +
+        '<h2>Career Assistant</h2>' +
+        '<p>Mode: <b>'+esc(status.mode)+'</b></p>' +
+        '<p>Ollama: '+(status.ollama_online?'Online':'Offline / fallback rules')+'</p>' +
+        '<p>Model: '+esc(status.model)+'</p>' +
+        '<h2>Job sources</h2>' +
+        sources.active.map(function(s){return '<div class="sourceRow"><b>'+esc(s.name)+'</b><span class="pill good">'+esc(s.status)+'</span><small>'+esc(s.mode)+'</small></div>';}).join('') +
+        '<h3>Planned / restricted</h3>' +
+        sources.planned.map(function(s){return '<div class="sourceRow"><b>'+esc(s.name)+'</b><span class="pill warn">'+esc(s.status)+'</span><small>'+esc(s.mode)+'</small></div>';}).join('') +
+        '<p class="policyNote">XING and StepStone remain manual/authorized integrations. Direct employer ATS collectors are preferred for automated acquisition.</p>' +
+      '</div>' +
+      '<div class="card detailPage atsTargets">' +
+        '<h2>Direct employer ATS collectors</h2>' +
+        '<p>Configure employers using Lever, SmartRecruiters or Ashby. Refresh Current Jobs will pull public postings, keep Germany/remote-EU technical roles, and put them into the same CV-matching pipeline.</p>' +
+        '<form id="collectorTargetForm" class="collectorForm">' +
+          '<label>Provider<select name="provider"><option value="ashby">Ashby</option><option value="lever">Lever (global)</option><option value="lever-eu">Lever (EU)</option><option value="smartrecruiters">SmartRecruiters</option></select></label>' +
+          '<label>Company label<input name="label" placeholder="Company name" required></label>' +
+          '<label>Job board / company identifier<input name="identifier" placeholder="Ashby: final part of jobs.ashbyhq.com/Company" required></label>' +
+          '<button class="primary" type="submit">Add collector</button>' +
+        '</form>' +
+        '<div id="collectorTargetsList">' +
+          (targets.length ? targets.map(function(t){return '<div class="sourceRow"><div><b>'+esc(t.label)+'</b><small>'+esc(t.provider)+' · '+esc(t.identifier)+'</small></div><span class="pill good">'+(t.enabled?'enabled':'disabled')+'</span><button class="iconBtn deleteCollector" data-id="'+t.id+'" type="button">✕</button></div>';}).join('') : '<div class="empty">No employer ATS companies configured yet.</div>') +
+        '</div>' +
+      '</div>' +
+      '<div class="card detailPage">' +
+        '<h2>External collector bridge</h2>' +
+        '<p>Your existing Playwright collector can stay separate and send normalized, authorized results to <code>POST /api/jobs/bulk-import</code>. This keeps browser automation isolated from JobIntel core.</p>' +
+        '<pre class="codeSample">{ "jobs": [{ "source": "External Collector", "title": "...", "company": "...", "location": "Germany", "url": "...", "description": "...", "remote": false }] }</pre>' +
+      '</div>' +
+    '</div>';
+
+  document.querySelector('#profileForm').onsubmit=async function(e){
+    e.preventDefault();
+    const data=Object.fromEntries(new FormData(e.target).entries());
+    currentUser=await apiFetch('/api/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+    showApp();
+    alert('Profile saved.');
+  };
+
+  document.querySelector('#logoutButton').onclick=logout;
+
+  document.querySelector('#collectorTargetForm').onsubmit=async function(e){
+    e.preventDefault();
+    const data=Object.fromEntries(new FormData(e.target).entries());
+    try{
+      await apiFetch('/api/collector-targets',{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(data)
+      });
+      await renderSettingsPage();
+      alert('Collector added. Click Refresh Current Jobs to fetch its current postings.');
+    }catch(err){
+      alert('Collector could not be added: '+err.message);
+    }
+  };
+
+  document.querySelectorAll('.deleteCollector').forEach(function(button){
+    button.onclick=async function(){
+      await apiFetch('/api/collector-targets/'+button.dataset.id,{method:'DELETE'});
+      await renderSettingsPage();
+    };
+  });
+}
 async function logout(){
   try{await apiFetch('/api/auth/logout',{method:'POST'});}catch{}
   localStorage.removeItem('jobintel_token'); currentUser=null; showAuth('Logged out.');
