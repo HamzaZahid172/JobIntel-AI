@@ -172,18 +172,126 @@ def candidate_job_records(cv: CVProfile | None, jobs: list[LiveJob]) -> list[tup
 def build_skill_gap(cv: CVProfile | None, jobs: list[LiveJob]) -> list[dict]:
     if not cv:
         return []
-    cv_skills = set(extract_skills(cv.text))
-    missing = Counter()
-    for job in jobs[:100]:
-        for skill in [s for s in job.skills.split(",") if s]:
-            if skill not in cv_skills:
-                missing[skill] += 1
 
-    suggestions = improvement_suggestions([s for s, _ in missing.most_common(12)])
+    required_missing = Counter()
+    preferred_missing = Counter()
+
+    for job in jobs[:100]:
+        details = match_details(cv, job)
+        for skill in details.get("missing_required_skills", []):
+            required_missing[skill] += 1
+        for skill in details.get("missing_preferred_skills", []):
+            preferred_missing[skill] += 1
+
+    combined = Counter(required_missing)
+    for skill, count in preferred_missing.items():
+        combined[skill] += count
+
+    suggestions = improvement_suggestions([s for s, _ in combined.most_common(12)])
     for suggestion in suggestions:
         key = suggestion["skill"].lower()
-        suggestion["market_count"] = missing.get(key, 0)
+        suggestion["market_count"] = combined.get(key, 0)
+        suggestion["required_count"] = required_missing.get(key, 0)
+        suggestion["preferred_count"] = preferred_missing.get(key, 0)
+        suggestion["gap_type"] = (
+            "Required"
+            if required_missing.get(key, 0) >= preferred_missing.get(key, 0)
+            else "Preferred"
+        )
     return suggestions[:6]
+
+
+def build_source_analytics(
+    db: Session,
+    user_id: int,
+    all_jobs: list[LiveJob],
+    relevant_jobs: list[LiveJob],
+) -> list[dict]:
+    all_counts = Counter(job.source for job in all_jobs)
+    relevant_counts = Counter(job.source for job in relevant_jobs)
+    targets = (
+        db.query(CollectorTarget)
+        .filter(CollectorTarget.user_id == user_id)
+        .all()
+    )
+
+    by_provider = Counter()
+    enabled_by_provider = Counter()
+    for target in targets:
+        provider = target.provider.lower()
+        canonical = PROVIDER_SOURCE.get(provider)
+        if canonical:
+            by_provider[canonical] += 1
+            if target.enabled:
+                enabled_by_provider[canonical] += 1
+
+    canonical_sources = [
+        ("Arbeitnow", "Public API", True),
+        ("Jobicy", "Public API", True),
+        ("Ashby", "Employer ATS", False),
+        ("Lever", "Employer ATS", False),
+        ("SmartRecruiters", "Employer ATS", False),
+    ]
+
+    last_sync_by_source = {}
+    for job in all_jobs:
+        if not job.fetched_at:
+            continue
+        previous = last_sync_by_source.get(job.source)
+        if previous is None or job.fetched_at > previous:
+            last_sync_by_source[job.source] = job.fetched_at
+
+    rows = []
+    for source, mode, always_enabled in canonical_sources:
+        target_count = by_provider.get(source, 0)
+        enabled_targets = enabled_by_provider.get(source, 0)
+        configured = always_enabled or target_count > 0
+        status = (
+            "active"
+            if always_enabled
+            else "configured"
+            if enabled_targets > 0
+            else "disabled"
+            if target_count > 0
+            else "not configured"
+        )
+        rows.append({
+            "source": source,
+            "mode": mode,
+            "status": status,
+            "configured": configured,
+            "targets": target_count,
+            "enabled_targets": enabled_targets,
+            "jobs": all_counts.get(source, 0),
+            "relevant_jobs": relevant_counts.get(source, 0),
+            "last_sync": (
+                last_sync_by_source[source].isoformat()
+                if source in last_sync_by_source
+                else None
+            ),
+        })
+
+    extra_sources = sorted(
+        set(all_counts) - {row[0] for row in canonical_sources}
+    )
+    for source in extra_sources:
+        rows.append({
+            "source": source,
+            "mode": "Imported / external",
+            "status": "active",
+            "configured": True,
+            "targets": 0,
+            "enabled_targets": 0,
+            "jobs": all_counts.get(source, 0),
+            "relevant_jobs": relevant_counts.get(source, 0),
+            "last_sync": (
+                last_sync_by_source[source].isoformat()
+                if source in last_sync_by_source
+                else None
+            ),
+        })
+
+    return rows
 
 
 def application_performance(apps: list[Application]) -> list[dict]:
@@ -1014,6 +1122,12 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
             "last_sync": last_sync.isoformat() if last_sync else None,
             "sources": dict(relevant_source_counts if cv else all_source_counts),
             "all_sources": dict(all_source_counts),
+            "source_analytics": build_source_analytics(
+                db,
+                user.id,
+                all_jobs,
+                relevant_jobs if cv else all_jobs,
+            ),
             "live": bool(all_jobs),
             "total_jobs": len(all_jobs),
             "relevant_jobs": len(relevant_jobs) if cv else len(all_jobs),
