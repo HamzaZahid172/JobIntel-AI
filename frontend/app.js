@@ -6,6 +6,7 @@ const navItems = [
   {route:'applications', label:'▤ My Applications'},
   {route:'ats', label:'▤ ATS CV Check'},
   {route:'matches', label:'♡ Matches'},
+  {route:'application-prep', label:'▣ Application Prep'},
   {route:'skill-gap', label:'▥ Skill Gap'},
   {route:'analytics', label:'▧ Analytics'},
   {route:'settings', label:'⚙ Settings'}
@@ -370,6 +371,7 @@ async function routeTo(route, updateHash=true){
     applications:['My Applications','Track every application and outcome'],
     ats:['ATS CV Check','CV readiness, skills and role profile'],
     matches:['Best Matches','Current jobs ranked against your CV'],
+    'application-prep':['Application Preparation','Prepared application packages, screening answers and CV-grounded cover letters'],
     'skill-gap':['Skill Gap','What current target jobs ask for that your CV is missing'],
     analytics:['Analytics','Your application and market performance'],
     settings:['Settings','Profile, AI assistant and data sources']
@@ -389,6 +391,7 @@ async function routeTo(route, updateHash=true){
   if(route==='applications') return renderApplicationsPage();
   if(route==='ats') return renderAtsPage();
   if(route==='matches') return renderMatchesPage();
+  if(route==='application-prep') return renderApplicationPrepPage();
   if(route==='skill-gap') return renderSkillGapPage();
   if(route==='analytics') return renderAnalyticsPage();
   if(route==='settings') return renderSettingsPage();
@@ -398,15 +401,22 @@ function jobCard(job, compact){
   const score = job.match == null ? '—' : Math.round(job.match) + '%';
   const skills = (job.matched_skills && job.matched_skills.length ? job.matched_skills : job.skills || []).slice(0,6);
   const missing = (job.missing_skills || []).slice(0,4);
+  const breakdown = job.score_breakdown || {};
+  const breakdownHtml = !compact && Object.keys(breakdown).length
+    ? '<div class="matchBreakdownMini"><span>Role ' + Math.round(breakdown.role_alignment || 0) + '%</span><span>Required skills ' + Math.round(breakdown.required_skills || 0) + '%</span><span>Experience ' + Math.round(breakdown.experience || 0) + '%</span><span>Language ' + Math.round(breakdown.language || 0) + '%</span></div>'
+    : '';
   return '<article class="marketJob card">' +
     '<div class="marketJobTop"><div><span class="sourceTag">' + esc(job.source) + '</span>' +
     '<h3>' + esc(job.title) + '</h3><p>' + esc(job.company) + ' · ' + esc(job.location) + '</p></div>' +
     '<div class="scoreBadge">' + score + '<small>match</small></div></div>' +
     '<div class="tagRow">' + skills.map(function(s){return '<span class="tag">' + esc(s) + '</span>';}).join('') + '</div>' +
+    breakdownHtml +
     (!compact && missing.length ? '<p class="missingLine"><b>Missing:</b> ' + missing.map(esc).join(', ') + '</p>' : '') +
+    (!compact && job.hard_blockers && job.hard_blockers.length ? '<p class="blockerLine"><b>Review:</b> ' + job.hard_blockers.map(esc).join(' ') + '</p>' : '') +
     '<div class="jobActions">' +
       (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
       '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
+      '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
 }
@@ -422,6 +432,12 @@ function bindTrackButtons(){
   document.querySelectorAll('.coverLetterBtn').forEach(function(button){
     button.onclick = function(){
       downloadCoverLetter(button.dataset.jobId, button);
+    };
+  });
+
+  document.querySelectorAll('.prepareApplicationBtn').forEach(function(button){
+    button.onclick = function(){
+      prepareApplication(button.dataset.jobId, button);
     };
   });
 }
@@ -464,6 +480,54 @@ async function downloadCoverLetter(jobId, button){
     button.textContent = originalText;
   }finally{
     button.disabled = false;
+  }
+}
+
+async function prepareApplication(jobId, button){
+  const originalText = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Preparing…';
+  try{
+    const prepared = await apiFetch('/api/jobs/' + jobId + '/prepare-application', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({minimum_match:70})
+    });
+    button.textContent = prepared.status === 'Package Ready' ? 'Package ready ✓' : 'Needs review ✓';
+    setTimeout(function(){ button.textContent = originalText; }, 1600);
+    await routeTo('application-prep');
+  }catch(err){
+    alert('Application package could not be prepared: ' + err.message);
+    button.textContent = originalText;
+  }finally{
+    button.disabled = false;
+  }
+}
+
+async function downloadPackageCoverLetter(packageId, button){
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = 'Preparing download…';
+  try{
+    const payload = await apiFetch('/api/application-packages/' + packageId + '/cover-letter', {method:'POST'});
+    const binary = atob(payload.content_base64 || '');
+    if(!binary) throw new Error('The prepared cover letter is empty.');
+    const bytes = new Uint8Array(binary.length);
+    for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+    const blob = new Blob([bytes], {type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = payload.filename || 'Prepared_Cover_Letter.docx';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1500);
+  }catch(err){
+    alert('Prepared cover letter could not be downloaded: ' + err.message);
+  }finally{
+    button.disabled=false;
+    button.textContent=original;
   }
 }
 
@@ -549,6 +613,69 @@ async function renderMatchesPage(){
   jobMarketCache=await apiFetch('/api/jobs?limit=100');
   document.querySelector('#pageContent').innerHTML='<div class="pageIntro"><h2>Best matches for your current CV</h2><p>These scores combine skill overlap, role relevance, experience and language signals.</p></div><div class="jobMarketGrid">'+jobMarketCache.map(function(j){return jobCard(j,false);}).join('')+'</div>';
   bindTrackButtons();
+}
+
+async function renderApplicationPrepPage(){
+  const packages = await apiFetch('/api/application-packages');
+  const page = document.querySelector('#pageContent');
+
+  if(!packages.length){
+    page.innerHTML =
+      '<div class="card detailPage"><h2>No prepared applications yet</h2>' +
+      '<p>Open Job Market or Matches and click <b>Prepare application</b>. JobIntel will snapshot the current CV/job match, generate a cover letter, draft safe screening answers and flag anything that needs your input.</p>' +
+      '<button id="goJobMarket" class="primary">Open Job Market</button></div>';
+    document.querySelector('#goJobMarket').onclick=function(){routeTo('job-market');};
+    return;
+  }
+
+  page.innerHTML =
+    '<div class="pageIntro"><h2>Prepared application packages</h2><p>Preparation is automatic; submission is still under your control.</p></div>' +
+    '<div class="prepGrid">' +
+      packages.map(function(item){
+        const p=item.package||{};
+        const job=p.job||{};
+        const validation=p.validation||{};
+        const answers=p.screening_answers||[];
+        const unresolved=p.unresolved_fields||[];
+        const breakdown=(p.match||{}).score_breakdown||{};
+        return '<article class="card prepCard">' +
+          '<div class="prepHead"><div><span class="sourceTag">'+esc(job.source||'Prepared')+'</span><h3>'+esc(job.title||'Job')+'</h3><p>'+esc(job.company||'')+' · '+esc(job.location||'')+'</p></div><div class="scoreBadge">'+Math.round(item.match_score||0)+'%<small>match</small></div></div>' +
+          '<div class="prepStatus"><span class="pill '+(item.status==='Package Ready'?'good':'warn')+'">'+esc(item.status)+'</span><span>'+esc(item.cover_letter_generator)+' cover letter</span></div>' +
+          '<div class="matchBreakdownMini"><span>Role '+Math.round(breakdown.role_alignment||0)+'%</span><span>Required '+Math.round(breakdown.required_skills||0)+'%</span><span>Experience '+Math.round(breakdown.experience||0)+'%</span><span>Language '+Math.round(breakdown.language||0)+'%</span></div>' +
+          (!validation.passed ? '<div class="prepWarning"><b>Validation needs review</b><br>'+((validation.hard_blockers||[]).map(esc).join('<br>') || 'Match threshold or eligibility checks need review.')+'</div>' : '') +
+          '<form class="prepAnswers" data-package-id="'+item.id+'">' +
+            answers.map(function(a){
+              return '<label><span>'+esc(a.question)+' <small>'+esc(a.status)+'</small></span><textarea name="'+esc(a.key)+'" rows="2" placeholder="'+(a.status==='needs_user_input'?'Add your answer before applying':'Draft answer')+'">'+esc(a.answer||'')+'</textarea></label>';
+            }).join('') +
+            '<div class="prepActions">' +
+              '<button type="submit" class="secondary">Save answers</button>' +
+              '<button type="button" class="secondary packageCoverBtn" data-package-id="'+item.id+'">Download cover letter</button>' +
+              (job.url?'<a class="primaryLink" href="'+esc(job.url)+'" target="_blank" rel="noopener">Open application ↗</a>':'') +
+            '</div>' +
+            (unresolved.length?'<p class="unresolvedLine">'+unresolved.length+' field(s) still need your input before this package is ready.</p>':'') +
+          '</form>' +
+        '</article>';
+      }).join('') +
+    '</div>';
+
+  document.querySelectorAll('.prepAnswers').forEach(function(form){
+    form.onsubmit=async function(e){
+      e.preventDefault();
+      const values=Object.fromEntries(new FormData(form).entries());
+      try{
+        await apiFetch('/api/application-packages/'+form.dataset.packageId+'/answers',{
+          method:'PATCH',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({answers:values})
+        });
+        await renderApplicationPrepPage();
+      }catch(err){alert('Answers could not be saved: '+err.message);}
+    };
+  });
+
+  document.querySelectorAll('.packageCoverBtn').forEach(function(button){
+    button.onclick=function(){downloadPackageCoverLetter(button.dataset.packageId,button);};
+  });
 }
 
 async function renderSkillGapPage(){
