@@ -27,6 +27,7 @@ The Settings page can configure employer career sites backed by:
 - **Lever (global)**
 - **Lever (EU)**
 - **SmartRecruiters**
+- **Ashby**
 
 You need the employer's public site/company identifier.
 
@@ -36,15 +37,17 @@ Examples of provider values:
 lever
 lever-eu
 smartrecruiters
+ashby
 ```
 
 When **Refresh Current Jobs** runs, JobIntel retrieves public postings for each configured target, keeps Germany/remote-EU technical roles, normalizes the job descriptions, extracts skills, and stores them in the same `live_jobs` table.
 
-Lever documents a Postings API intended for building job sites and exposes published job postings. SmartRecruiters documents its Posting API for active published postings. Use source-specific terms and rate limits.
+Lever exposes published employer postings, SmartRecruiters exposes public postings for configured companies, and Ashby exposes currently published jobs through its public Job Postings API. Use source-specific terms and rate limits.
 
 Official documentation:
 - https://github.com/lever/postings-api
 - https://developers.smartrecruiters.com/docs/posting-api
+- https://developers.ashbyhq.com/docs/public-job-posting-api
 
 ## Existing Playwright collector
 
