@@ -72,11 +72,14 @@ async function load() {
   const s = d.summary;
 
   const sourceText = Object.entries(d.market.sources || {}).map(([k,v]) => `${k}: ${v}`).join(' · ');
+  const atsConfigured = (d.market.source_analytics || []).filter(function(x){
+    return x.mode === 'Employer ATS' && x.status === 'configured';
+  }).length;
   document.querySelector('#marketStatus').textContent =
     d.market.live
       ? (d.cv.uploaded
-          ? `CV-filtered market · ${d.market.relevant_jobs} relevant of ${d.market.total_jobs} tracked · ${sourceText || 'Current feeds'} · Last sync ${fmtDate(d.market.last_sync)}`
-          : `Live PostgreSQL snapshot · ${sourceText || 'Current feeds'} · Last sync ${fmtDate(d.market.last_sync)}`)
+          ? `CV-filtered market · ${d.market.relevant_jobs} relevant of ${d.market.total_jobs} tracked · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`
+          : `Live PostgreSQL snapshot · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`)
       : 'No live jobs stored yet. Click “Refresh Current Jobs”.';
 
   const atsValue = s.ats_score == null ? '—' : `${Math.round(s.ats_score)} / 100`;
@@ -176,7 +179,7 @@ async function load() {
 
   document.querySelector('#gaps').innerHTML = head('Skill Gap for CV-Relevant Jobs') +
     (d.skill_gap.length ? d.skill_gap.map(x=>`
-      <div class="gap"><b>${esc(x.skill)}</b><span class="pill warn">${x.market_count||0} jobs</span><small>${esc(x.action)}</small></div>`).join('')
+      <div class="gap"><b>${esc(x.skill)}</b><span class="pill warn">${x.market_count||0} jobs</span><small>${x.required_count||0} required · ${x.preferred_count||0} preferred</small><small>${esc(x.action)}</small></div>`).join('')
       : empty(d.cv.uploaded ? 'No clear repeated gap in your filtered job set.' : 'Upload your CV to calculate real skill gaps.'));
 
   document.querySelector('#readiness').innerHTML = head('Interview Readiness') +
@@ -680,13 +683,58 @@ async function renderApplicationPrepPage(){
 
 async function renderSkillGapPage(){
   const d=await apiFetch('/api/dashboard');
-  document.querySelector('#pageContent').innerHTML='<div class="detailGrid"><div class="card detailPage"><h2>Your top skills</h2>'+(d.profile.top_skills||[]).map(function(x){return '<div class="skillDetail"><b>'+esc(x.skill)+'</b><span>'+x.market_count+' relevant jobs</span></div>';}).join('')+'</div><div class="card detailPage"><h2>Repeated gaps</h2>'+d.skill_gap.map(function(g){return '<div class="gapPage"><b>'+esc(g.skill)+'</b><span class="pill warn">'+g.market_count+' jobs</span><p>'+esc(g.action)+'</p></div>';}).join('')+'</div></div>';
+  const gaps=d.skill_gap||[];
+  document.querySelector('#pageContent').innerHTML=
+    '<div class="pageIntro"><h2>Skill Gap Analysis</h2><p>Calculated from missing required and preferred skills in your current CV-relevant jobs, not from the whole market.</p></div>'+
+    '<div class="detailGrid">'+
+      '<div class="card detailPage"><h2>Your top skills</h2>'+
+        ((d.profile.top_skills||[]).length?(d.profile.top_skills||[]).map(function(x){return '<div class="skillDetail"><b>'+esc(x.skill)+'</b><span>'+x.market_count+' relevant jobs</span></div>';}).join(''):'<p>No CV skills available.</p>')+
+      '</div>'+
+      '<div class="card detailPage"><h2>Repeated gaps</h2>'+
+        (gaps.length?gaps.map(function(g){
+          return '<div class="gapPage"><div class="gapTitleRow"><b>'+esc(g.skill)+'</b><span class="pill warn">'+g.market_count+' jobs</span></div>'+
+            '<div class="gapCounts"><span>'+g.required_count+' required</span><span>'+g.preferred_count+' preferred</span><span>'+esc(g.gap_type)+'-heavy</span></div>'+
+            '<p>'+esc(g.action)+'</p></div>';
+        }).join(''):'<p>No repeated missing skills in the current filtered market.</p>')+
+      '</div>'+
+    '</div>';
 }
 
 async function renderAnalyticsPage(){
   const d=await apiFetch('/api/dashboard');
-  const sourceRows=Object.entries(d.market.all_sources||{}).map(function(row){return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+row[1]+' jobs</span></div>';}).join('');
-  document.querySelector('#pageContent').innerHTML='<div class="analyticsGrid"><div class="card detailPage"><h2>Application funnel</h2>'+Object.entries(d.pipeline).map(function(row){return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+row[1]+'</span></div>';}).join('')+'</div><div class="card detailPage"><h2>Job sources</h2>'+sourceRows+'</div><div class="card detailPage"><h2>CV performance</h2>'+(d.performance.length?d.performance.map(function(p){return '<div class="analyticsRow"><b>'+esc(p.label)+'</b><span>'+p.value+'% interview conversion · '+p.applications+' apps</span></div>';}).join(''):'<p>No outcome history yet.</p>')+'</div></div>';
+  const sourceAnalytics=d.market.source_analytics||[];
+  const sourceRows=sourceAnalytics.map(function(s){
+    const statusClass=s.status==='active'||s.status==='configured'?'good':'warn';
+    const targetText=s.mode==='Employer ATS'
+      ? (s.targets ? s.enabled_targets+' enabled target'+(s.enabled_targets===1?'':'s') : 'Add employer target')
+      : s.mode;
+    return '<div class="sourceAnalyticsRow">'+
+      '<div><b>'+esc(s.source)+'</b><small>'+esc(targetText)+'</small></div>'+
+      '<div class="sourceMetrics"><strong>'+s.jobs+' jobs</strong><span>'+s.relevant_jobs+' CV-relevant</span></div>'+
+      '<span class="pill '+statusClass+'">'+esc(s.status)+'</span>'+
+    '</div>';
+  }).join('');
+
+  const configuredAts=sourceAnalytics.filter(function(s){return s.mode==='Employer ATS' && s.status==='configured';}).length;
+  const atsJobs=sourceAnalytics.filter(function(s){return s.mode==='Employer ATS';}).reduce(function(sum,s){return sum+s.jobs;},0);
+
+  document.querySelector('#pageContent').innerHTML=
+    '<div class="analyticsSummary">'+
+      '<div class="card analyticsMini"><small>Total tracked jobs</small><b>'+d.market.total_jobs+'</b></div>'+
+      '<div class="card analyticsMini"><small>CV-relevant jobs</small><b>'+d.market.relevant_jobs+'</b></div>'+
+      '<div class="card analyticsMini"><small>ATS sources configured</small><b>'+configuredAts+'/3</b></div>'+
+      '<div class="card analyticsMini"><small>ATS jobs collected</small><b>'+atsJobs+'</b></div>'+
+    '</div>'+
+    '<div class="analyticsGrid">'+
+      '<div class="card detailPage"><h2>Application funnel</h2>'+Object.entries(d.pipeline).map(function(row){return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+row[1]+'</span></div>';}).join('')+'</div>'+
+      '<div class="card detailPage sourceAnalyticsCard"><div class="panelHead"><h2>Job sources</h2><button id="configureSources" class="secondary">Configure ATS</button></div>'+
+        '<p class="muted">A source can be supported by JobIntel but still show 0 jobs until at least one employer target is configured and refreshed.</p>'+
+        sourceRows+
+      '</div>'+
+      '<div class="card detailPage"><h2>CV performance</h2>'+(d.performance.length?d.performance.map(function(p){return '<div class="analyticsRow"><b>'+esc(p.label)+'</b><span>'+p.value+'% interview conversion · '+p.applications+' apps</span></div>';}).join(''):'<p>No outcome history yet.</p>')+'</div>'+
+    '</div>';
+
+  document.querySelector('#configureSources').onclick=function(){routeTo('settings');};
 }
 
 async function renderSettingsPage(){
