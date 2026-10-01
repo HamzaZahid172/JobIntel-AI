@@ -16,6 +16,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .application_preparation import build_application_package_payload
 from .ats_collectors import PROVIDER_SOURCE, sync_configured_ats
 from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
 from .auth import (
@@ -37,10 +38,13 @@ from .intelligence import (
     profile_role_families,
     rank_cv_skills,
 )
-from .models import Application, CVProfile, CollectorTarget, Job, LiveJob, User
+from .match_layer import build_match_report
+from .models import Application, ApplicationPackage, CVProfile, CollectorTarget, Job, LiveJob, User
 from .schemas import (
     ApplicationCreate,
     ApplicationOut,
+    ApplicationPackageAnswerUpdate,
+    ApplicationPreparationRequest,
     ApplicationUpdate,
     AssistantRequest,
     BulkJobImport,
@@ -101,7 +105,13 @@ def refresh_cv_analysis(db: Session, cv: CVProfile) -> dict:
 
 
 def match_details(cv: CVProfile, job: LiveJob) -> dict:
-    return match_cv_to_job(cv.text, job.description, job.title)
+    return build_match_report(
+        cv.text,
+        job.title,
+        job.description,
+        job.location,
+        job.remote,
+    )
 
 
 def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
@@ -122,6 +132,11 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
         "matched_skills": details["matched_skills"] if details else [],
         "missing_skills": details["missing_skills"] if details else [],
         "job_role_families": details["job_role_families"] if details else [],
+        "score_breakdown": details.get("score_breakdown", {}) if details else {},
+        "requirements": details.get("requirements", {}) if details else {},
+        "hard_blockers": details.get("hard_blockers", []) if details else [],
+        "reasons": details.get("reasons", []) if details else [],
+        "eligible_for_preparation": details.get("eligible_for_preparation", False) if details else False,
         "posted_at": job.posted_at.isoformat() if job.posted_at else None,
         "fetched_at": job.fetched_at.isoformat() if job.fetched_at else None,
     }
@@ -206,7 +221,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="JobIntel AI API", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="JobIntel AI API", version="0.7.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -219,7 +234,7 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "version": "0.6.0"}
+    return {"status": "ok", "version": "0.7.0"}
 
 
 @app.post("/api/auth/register")
@@ -370,6 +385,30 @@ def import_job(
     cv = latest_cv(db, user.id)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
+
+
+@app.get("/api/jobs/{job_id}/match-report")
+def job_match_report(
+    job_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+
+    cv = latest_cv(db, user.id)
+    if not cv:
+        raise HTTPException(400, "Upload your CV before calculating a match report.")
+
+    return {
+        "job": serialize_job(job, match_details(cv, job)),
+        "match": match_details(cv, job),
+        "cv": {
+            "id": cv.id,
+            "filename": cv.filename,
+        },
+    }
 
 
 @app.post("/api/jobs/{job_id}/cover-letter")
@@ -588,6 +627,198 @@ def delete_collector_target(
     db.delete(row)
     db.commit()
     return {"ok": True}
+
+
+def serialize_application_package(item: ApplicationPackage) -> dict:
+    try:
+        payload = json.loads(item.package_json or "{}")
+    except Exception:
+        payload = {}
+
+    return {
+        "id": item.id,
+        "user_id": item.user_id,
+        "live_job_id": item.live_job_id,
+        "cv_profile_id": item.cv_profile_id,
+        "status": item.status,
+        "match_score": item.match_score,
+        "cover_letter_generator": item.cover_letter_generator,
+        "package": payload,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+    }
+
+
+@app.post("/api/jobs/{job_id}/prepare-application")
+async def prepare_application(
+    job_id: int,
+    payload: ApplicationPreparationRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+
+    cv = latest_cv(db, user.id)
+    if not cv:
+        raise HTTPException(400, "Upload your CV before preparing an application.")
+
+    report = match_details(cv, job)
+    letter_text, generator_mode = await generate_cover_letter_text(
+        cv.text,
+        job,
+        report,
+        user,
+    )
+    package_payload = build_application_package_payload(
+        job=job,
+        cv=cv,
+        user=user,
+        match_report=report,
+        cover_letter_text=letter_text,
+        cover_letter_generator=generator_mode,
+        minimum_match=payload.minimum_match,
+    )
+
+    item = (
+        db.query(ApplicationPackage)
+        .filter(
+            ApplicationPackage.user_id == user.id,
+            ApplicationPackage.live_job_id == job.id,
+            ApplicationPackage.cv_profile_id == cv.id,
+        )
+        .first()
+    )
+    if item is None:
+        item = ApplicationPackage(
+            user_id=user.id,
+            live_job_id=job.id,
+            cv_profile_id=cv.id,
+        )
+        db.add(item)
+
+    item.status = package_payload["status"]
+    item.match_score = report["overall_score"]
+    item.cover_letter_text = letter_text
+    item.cover_letter_generator = generator_mode
+    item.package_json = json.dumps(package_payload)
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+
+    return serialize_application_package(item)
+
+
+@app.get("/api/application-packages")
+def application_packages(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(ApplicationPackage)
+        .filter(ApplicationPackage.user_id == user.id)
+        .order_by(ApplicationPackage.updated_at.desc())
+        .all()
+    )
+    return [serialize_application_package(row) for row in rows]
+
+
+@app.get("/api/application-packages/{package_id}")
+def application_package(
+    package_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = (
+        db.query(ApplicationPackage)
+        .filter(
+            ApplicationPackage.id == package_id,
+            ApplicationPackage.user_id == user.id,
+        )
+        .first()
+    )
+    if not item:
+        raise HTTPException(404, "Application package not found.")
+    return serialize_application_package(item)
+
+
+@app.patch("/api/application-packages/{package_id}/answers")
+def update_application_package_answers(
+    package_id: int,
+    payload: ApplicationPackageAnswerUpdate,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = (
+        db.query(ApplicationPackage)
+        .filter(
+            ApplicationPackage.id == package_id,
+            ApplicationPackage.user_id == user.id,
+        )
+        .first()
+    )
+    if not item:
+        raise HTTPException(404, "Application package not found.")
+
+    package = json.loads(item.package_json or "{}")
+    rows = package.get("screening_answers", [])
+    for row in rows:
+        key = row.get("key")
+        if key in payload.answers:
+            value = (payload.answers[key] or "").strip()
+            row["answer"] = value
+            row["status"] = "complete" if value else "needs_user_input"
+
+    package["unresolved_fields"] = [
+        row.get("key")
+        for row in rows
+        if row.get("status") == "needs_user_input"
+    ]
+    validation_ok = bool((package.get("validation") or {}).get("passed"))
+    item.status = (
+        "Package Ready"
+        if validation_ok and not package["unresolved_fields"]
+        else "Needs Review"
+    )
+    package["status"] = item.status
+    item.package_json = json.dumps(package)
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return serialize_application_package(item)
+
+
+@app.post("/api/application-packages/{package_id}/cover-letter")
+def application_package_cover_letter(
+    package_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    item = (
+        db.query(ApplicationPackage)
+        .filter(
+            ApplicationPackage.id == package_id,
+            ApplicationPackage.user_id == user.id,
+        )
+        .first()
+    )
+    if not item:
+        raise HTTPException(404, "Application package not found.")
+
+    job = db.get(LiveJob, item.live_job_id)
+    if not job:
+        raise HTTPException(404, "Prepared job no longer exists.")
+
+    content = build_cover_letter_docx(item.cover_letter_text, user, job)
+    filename = safe_filename(
+        f"{user.display_name}_{job.company}_{job.title}_Prepared_Cover_Letter"
+    ) + ".docx"
+    return {
+        "filename": filename,
+        "generator": item.cover_letter_generator,
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    }
 
 
 @app.get("/api/applications", response_model=list[ApplicationOut])
