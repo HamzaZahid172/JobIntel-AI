@@ -92,11 +92,36 @@ def _language_requirements(text: str) -> list[dict]:
     return requirements
 
 
-def _cv_mentions_language(cv_text: str, language: str) -> bool:
+LANGUAGE_LEVEL_RANK = {
+    "A1": 1, "A2": 2, "B1": 3, "B2": 4, "C1": 5, "C2": 6,
+    "Professional": 4, "Required": 4, "C1+": 5,
+}
+
+
+def _cv_language_level(cv_text: str, language: str) -> str | None:
     lower = (cv_text or "").lower()
+    names = [language.lower()]
     if language.lower() == "german":
-        return "german" in lower or "deutsch" in lower
-    return language.lower() in lower
+        names.append("deutsch")
+    for name in names:
+        explicit = re.search(
+            rf"{re.escape(name)}.{{0,24}}\b(a1|a2|b1|b2|c1|c2)\b|\b(a1|a2|b1|b2|c1|c2)\b.{{0,24}}{re.escape(name)}",
+            lower,
+        )
+        if explicit:
+            return next(value.upper() for value in explicit.groups() if value)
+        if re.search(rf"(?:native|mother tongue).{{0,20}}{re.escape(name)}|{re.escape(name)}.{{0,20}}(?:native|mother tongue)", lower):
+            return "C2"
+        if re.search(rf"(?:fluent|professional|business).{{0,20}}{re.escape(name)}|{re.escape(name)}.{{0,20}}(?:fluent|professional|business)", lower):
+            return "Professional"
+    return None
+
+
+def _language_requirement_met(cv_text: str, language: str, required_level: str) -> bool:
+    level = _cv_language_level(cv_text, language)
+    if level is None:
+        return False
+    return LANGUAGE_LEVEL_RANK.get(level, 0) >= LANGUAGE_LEVEL_RANK.get(required_level, 4)
 
 
 def _location_score(location: str, remote: bool) -> tuple[int, str]:
@@ -187,7 +212,8 @@ def build_match_report(
     language_requirements = requirements["languages"]
     missing_languages = [
         row for row in language_requirements
-        if row.get("required") and not _cv_mentions_language(cv_text, row["language"])
+        if row.get("required")
+        and not _language_requirement_met(cv_text, row["language"], row.get("level", "Required"))
     ]
     hard_language_gaps = [
         row for row in missing_languages
@@ -220,7 +246,7 @@ def build_match_report(
         hard_blockers.append("Too many core technical requirements are missing.")
     if hard_language_gaps:
         hard_blockers.append(
-            "A required non-English language is not clearly evidenced in the uploaded CV."
+            "A required non-English language level is higher than the level evidenced in the uploaded CV."
         )
 
     if hard_blockers:
