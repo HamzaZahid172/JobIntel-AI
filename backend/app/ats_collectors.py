@@ -25,6 +25,7 @@ PROVIDER_SOURCE = {
     "lever-eu": "Lever",
     "smartrecruiters": "SmartRecruiters",
     "ashby": "Ashby",
+    "greenhouse": "Greenhouse",
 }
 
 
@@ -198,6 +199,43 @@ def fetch_ashby(client: httpx.Client, target: CollectorTarget) -> list[dict]:
     return jobs
 
 
+
+def fetch_greenhouse(client: httpx.Client, target: CollectorTarget) -> list[dict]:
+    response = client.get(
+        f"https://boards-api.greenhouse.io/v1/boards/{target.identifier}/jobs",
+        params={"content": "true"},
+        headers={"Accept": "application/json"},
+    )
+    response.raise_for_status()
+    payload = response.json()
+    jobs = []
+
+    for item in payload.get("jobs") or []:
+        title = item.get("title") or ""
+        location = ((item.get("location") or {}).get("name") or "Unknown").strip()
+        description = strip_html(item.get("content") or "")
+        remote = "remote" in location.lower()
+        if not is_target_technical_role(title, description):
+            continue
+        if not _germany_or_remote_eu(location, remote, ""):
+            continue
+
+        jobs.append({
+            "source": "Greenhouse",
+            "source_id": f"{target.identifier}:{item.get('id')}",
+            "title": title,
+            "company": target.label,
+            "location": location,
+            "remote": remote,
+            "url": item.get("absolute_url") or "",
+            "description": description,
+            "skills": extract_skills(title + " " + description),
+            "job_types": [],
+            "posted_at": parse_timestamp(item.get("updated_at")),
+        })
+
+    return jobs
+
 def _fetch_target(client: httpx.Client, target: CollectorTarget) -> tuple[str, list[dict]]:
     provider = target.provider.lower().strip()
     if provider in {"lever", "lever-eu"}:
@@ -206,6 +244,8 @@ def _fetch_target(client: httpx.Client, target: CollectorTarget) -> tuple[str, l
         return "SmartRecruiters", fetch_smartrecruiters(client, target)
     if provider == "ashby":
         return "Ashby", fetch_ashby(client, target)
+    if provider == "greenhouse":
+        return "Greenhouse", fetch_greenhouse(client, target)
     raise ValueError(f"Unsupported provider: {target.provider}")
 
 
