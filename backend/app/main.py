@@ -231,6 +231,7 @@ def build_source_analytics(
         ("Ashby", "Employer ATS", False),
         ("Lever", "Employer ATS", False),
         ("SmartRecruiters", "Employer ATS", False),
+        ("Greenhouse", "Employer ATS", False),
     ]
 
     last_sync_by_source = {}
@@ -309,6 +310,58 @@ def application_performance(apps: list[Application]) -> list[dict]:
             "applications": len(rows),
         })
     return sorted(result, key=lambda x: (x["value"], x["applications"]), reverse=True)[:6]
+
+
+def application_conversion_insights(apps: list[Application]) -> dict:
+    submitted = [
+        row for row in apps
+        if row.status in {"Applied", "Screening", "Interview", "Final", "Offer", "Rejected"}
+    ]
+    total = len(submitted)
+    positive_statuses = {"Screening", "Interview", "Final", "Offer"}
+    positive = sum(1 for row in submitted if row.status in positive_statuses)
+    interviews = sum(1 for row in submitted if row.status in {"Interview", "Final", "Offer"})
+    rejected = sum(1 for row in submitted if row.status == "Rejected")
+    pending = sum(1 for row in submitted if row.status == "Applied")
+    high_match_rejections = sum(
+        1 for row in submitted
+        if row.status == "Rejected" and (row.match_score or 0) >= 75
+    )
+
+    recommendations = []
+    if total >= 5 and positive == 0:
+        recommendations.append(
+            "Stop optimizing for application volume. Prioritize only roles with 80%+ match and clear alignment to your primary role family."
+        )
+    if high_match_rejections >= 2:
+        recommendations.append(
+            "High-match applications are still being rejected. Treat this as a positioning problem: tailor the first-page summary and experience bullets to the job's top required skills."
+        )
+    if total >= 5 and rejected / total >= 0.6:
+        recommendations.append(
+            "Rejection rate is high. Narrow job selection by required language, seniority, work authorization and must-have skills before preparing an application."
+        )
+    if pending >= 3:
+        recommendations.append(
+            "Several applications are still at Applied. Use the follow-up queue after 5–7 days and prioritize direct employer applications over broad portals."
+        )
+    if not recommendations:
+        recommendations.append(
+            "Keep tracking outcomes. The system will become more useful once applications are consistently updated through Screening, Interview, Offer or Rejected."
+        )
+
+    return {
+        "submitted": total,
+        "positive_responses": positive,
+        "positive_response_rate": round(positive / total * 100) if total else 0,
+        "interviews": interviews,
+        "interview_rate": round(interviews / total * 100) if total else 0,
+        "rejections": rejected,
+        "rejection_rate": round(rejected / total * 100) if total else 0,
+        "pending": pending,
+        "high_match_rejections": high_match_rejections,
+        "recommendations": recommendations[:3],
+    }
 
 
 @asynccontextmanager
@@ -418,6 +471,7 @@ def sources(user: User = Depends(get_current_user)):
             {"name": "Lever", "mode": "Public employer postings", "status": "configurable"},
             {"name": "SmartRecruiters", "mode": "Public employer postings", "status": "configurable"},
             {"name": "Ashby", "mode": "Public Job Postings API", "status": "configurable"},
+            {"name": "Greenhouse", "mode": "Public Job Board API", "status": "configurable"},
             {"name": "Manual / Bulk Import", "mode": "Normalized external jobs", "status": "active"},
         ],
         "planned": [
@@ -1077,6 +1131,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     relevant_source_counts = Counter(job.source for job in relevant_jobs)
     gaps = build_skill_gap(cv, relevant_jobs)
     performance = application_performance(apps)
+    conversion = application_conversion_insights(apps)
 
     followups = []
     for row in apps:
@@ -1147,6 +1202,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
         "top_skills": top_skills if cv else aggregate_skills([job.skills for job in all_jobs]),
         "pipeline": counts,
         "performance": performance,
+        "conversion": conversion,
         "skill_gap": gaps,
         "interview_readiness": {"score": readiness_score, "level": readiness_level},
         "followups": followups[:5],
