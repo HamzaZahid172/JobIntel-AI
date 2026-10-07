@@ -142,17 +142,45 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
     }
 
 
-def candidate_job_records(cv: CVProfile | None, jobs: list[LiveJob]) -> list[tuple[LiveJob, dict | None]]:
+def _target_role_families(target_roles: str = "") -> set[str]:
+    text = (target_roles or "").lower()
+    families = set()
+    if any(term in text for term in ("backend", "python", "software engineer", "software developer")):
+        families.add("software_backend")
+    if any(term in text for term in ("qa", "automation", "sdet", "test")):
+        families.add("automation_qa")
+    if any(term in text for term in ("data engineer", "data engineering", "etl", "data platform")):
+        families.add("data_engineering")
+    if any(term in text for term in ("ai", "ml", "machine learning", "llm")):
+        families.add("ai_ml")
+    if any(term in text for term in ("frontend", "fullstack", "full stack")):
+        families.add("frontend_fullstack")
+    if any(term in text for term in ("devops", "platform", "sre", "cloud engineer")):
+        families.add("devops_platform")
+    return families
+
+
+def candidate_job_records(
+    cv: CVProfile | None,
+    jobs: list[LiveJob],
+    target_roles: str = "",
+) -> list[tuple[LiveJob, dict | None]]:
     if not cv:
         return [(job, None) for job in jobs]
 
     strongest = {item["skill"] for item in rank_cv_skills(cv.text, limit=10)}
+    target_families = _target_role_families(target_roles)
     records: list[tuple[LiveJob, dict]] = []
     for job in jobs:
         details = match_details(cv, job)
         job_skills = set(details["job_skills"])
+        job_families = set(details["job_role_families"])
         strong_overlap = strongest & job_skills
-        if details["role_score"] < 45:
+        if target_families and job_families and not (target_families & job_families):
+            continue
+        if details["hard_blockers"]:
+            continue
+        if details["overall_score"] < 65 or details["role_score"] < 45:
             continue
         if not strong_overlap and len(details["matched_skills"]) < 2:
             continue
@@ -231,6 +259,7 @@ def build_source_analytics(
         ("Ashby", "Employer ATS", False),
         ("Lever", "Employer ATS", False),
         ("SmartRecruiters", "Employer ATS", False),
+        ("Greenhouse", "Employer ATS", False),
     ]
 
     last_sync_by_source = {}
@@ -309,6 +338,58 @@ def application_performance(apps: list[Application]) -> list[dict]:
             "applications": len(rows),
         })
     return sorted(result, key=lambda x: (x["value"], x["applications"]), reverse=True)[:6]
+
+
+def application_conversion_insights(apps: list[Application]) -> dict:
+    submitted = [
+        row for row in apps
+        if row.status in {"Applied", "Screening", "Interview", "Final", "Offer", "Rejected"}
+    ]
+    total = len(submitted)
+    positive_statuses = {"Screening", "Interview", "Final", "Offer"}
+    positive = sum(1 for row in submitted if row.status in positive_statuses)
+    interviews = sum(1 for row in submitted if row.status in {"Interview", "Final", "Offer"})
+    rejected = sum(1 for row in submitted if row.status == "Rejected")
+    pending = sum(1 for row in submitted if row.status == "Applied")
+    high_match_rejections = sum(
+        1 for row in submitted
+        if row.status == "Rejected" and (row.match_score or 0) >= 75
+    )
+
+    recommendations = []
+    if total >= 5 and positive == 0:
+        recommendations.append(
+            "Stop optimizing for application volume. Prioritize only roles with 80%+ match and clear alignment to your primary role family."
+        )
+    if high_match_rejections >= 2:
+        recommendations.append(
+            "High-match applications are still being rejected. Treat this as a positioning problem: tailor the first-page summary and experience bullets to the job's top required skills."
+        )
+    if total >= 5 and rejected / total >= 0.6:
+        recommendations.append(
+            "Rejection rate is high. Narrow job selection by required language, seniority, work authorization and must-have skills before preparing an application."
+        )
+    if pending >= 3:
+        recommendations.append(
+            "Several applications are still at Applied. Use the follow-up queue after 5–7 days and prioritize direct employer applications over broad portals."
+        )
+    if not recommendations:
+        recommendations.append(
+            "Keep tracking outcomes. The system will become more useful once applications are consistently updated through Screening, Interview, Offer or Rejected."
+        )
+
+    return {
+        "submitted": total,
+        "positive_responses": positive,
+        "positive_response_rate": round(positive / total * 100) if total else 0,
+        "interviews": interviews,
+        "interview_rate": round(interviews / total * 100) if total else 0,
+        "rejections": rejected,
+        "rejection_rate": round(rejected / total * 100) if total else 0,
+        "pending": pending,
+        "high_match_rejections": high_match_rejections,
+        "recommendations": recommendations[:3],
+    }
 
 
 @asynccontextmanager
@@ -418,6 +499,7 @@ def sources(user: User = Depends(get_current_user)):
             {"name": "Lever", "mode": "Public employer postings", "status": "configurable"},
             {"name": "SmartRecruiters", "mode": "Public employer postings", "status": "configurable"},
             {"name": "Ashby", "mode": "Public Job Postings API", "status": "configurable"},
+            {"name": "Greenhouse", "mode": "Public Job Board API", "status": "configurable"},
             {"name": "Manual / Bulk Import", "mode": "Normalized external jobs", "status": "active"},
         ],
         "planned": [
@@ -443,7 +525,7 @@ def jobs(
         if cv:
             records.sort(key=lambda row: row[1]["overall_score"], reverse=True)
     else:
-        records = candidate_job_records(cv, live_jobs)
+        records = candidate_job_records(cv, live_jobs, user.target_roles)
     return [serialize_job(job, details) for job, details in records[: min(max(limit, 1), 500)]]
 
 
@@ -980,7 +1062,7 @@ def get_cv(user: User = Depends(get_current_user), db: Session = Depends(get_db)
         return {"uploaded": False}
 
     details = refresh_cv_analysis(db, cv)
-    relevant = candidate_job_records(cv, db.query(LiveJob).all())
+    relevant = candidate_job_records(cv, db.query(LiveJob).all(), user.target_roles)
     top_skills = rank_cv_skills(cv.text, [job.skills for job, _ in relevant], limit=12)
     return {
         "uploaded": True,
@@ -1051,7 +1133,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     counts = {status: sum(1 for app in apps if app.status == status) for status in statuses}
     interview_count = counts["Interview"] + counts["Final"] + counts["Offer"]
 
-    records = candidate_job_records(cv, all_jobs)
+    records = candidate_job_records(cv, all_jobs, user.target_roles)
     relevant_jobs = [job for job, _ in records]
     today = date.today()
     new_today = sum(1 for job in relevant_jobs if job.posted_at and job.posted_at.date() == today)
@@ -1077,6 +1159,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     relevant_source_counts = Counter(job.source for job in relevant_jobs)
     gaps = build_skill_gap(cv, relevant_jobs)
     performance = application_performance(apps)
+    conversion = application_conversion_insights(apps)
 
     followups = []
     for row in apps:
@@ -1147,6 +1230,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
         "top_skills": top_skills if cv else aggregate_skills([job.skills for job in all_jobs]),
         "pipeline": counts,
         "performance": performance,
+        "conversion": conversion,
         "skill_gap": gaps,
         "interview_readiness": {"score": readiness_score, "level": readiness_level},
         "followups": followups[:5],
@@ -1167,7 +1251,7 @@ async def assistant(
 ):
     cv = latest_cv(db, user.id)
     all_jobs = db.query(LiveJob).all()
-    records = candidate_job_records(cv, all_jobs)
+    records = candidate_job_records(cv, all_jobs, user.target_roles)
     relevant_jobs = [job for job, _ in records]
     apps = db.query(Application).filter(Application.user_id == user.id).all()
 

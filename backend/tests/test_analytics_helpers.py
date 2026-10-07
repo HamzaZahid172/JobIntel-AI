@@ -1,7 +1,7 @@
 from datetime import datetime
 from types import SimpleNamespace
 
-from app.main import build_skill_gap, build_source_analytics
+from app.main import application_conversion_insights, build_skill_gap, build_source_analytics
 
 
 class FakeQuery:
@@ -40,7 +40,7 @@ def test_source_analytics_lists_supported_sources_even_with_zero_jobs():
     rows = build_source_analytics(FakeDB(targets), 1, jobs, jobs)
     by_source = {row["source"]: row for row in rows}
 
-    assert set(["Arbeitnow", "Jobicy", "Ashby", "Lever", "SmartRecruiters"]).issubset(by_source)
+    assert set(["Arbeitnow", "Jobicy", "Ashby", "Lever", "SmartRecruiters", "Greenhouse"]).issubset(by_source)
     assert by_source["Ashby"]["status"] == "configured"
     assert by_source["Ashby"]["jobs"] == 1
     assert by_source["Lever"]["status"] == "not configured"
@@ -78,3 +78,20 @@ def test_skill_gap_uses_structured_required_and_preferred_requirements():
     assert by_skill["kafka"]["required_count"] == 2
     assert by_skill["airflow"]["preferred_count"] == 1
     assert by_skill["terraform"]["preferred_count"] == 1
+
+
+def test_application_conversion_insights_flags_high_match_rejections():
+    apps = [
+        SimpleNamespace(status="Rejected", match_score=88),
+        SimpleNamespace(status="Rejected", match_score=82),
+        SimpleNamespace(status="Applied", match_score=91),
+        SimpleNamespace(status="Applied", match_score=86),
+        SimpleNamespace(status="Applied", match_score=80),
+        SimpleNamespace(status="Rejected", match_score=70),
+    ]
+    result = application_conversion_insights(apps)
+    assert result["submitted"] == 6
+    assert result["positive_response_rate"] == 0
+    assert result["high_match_rejections"] == 2
+    assert result["rejection_rate"] == 50
+    assert any("positioning problem" in item for item in result["recommendations"])

@@ -59,3 +59,24 @@ def test_match_layer_flags_explicit_language_gap():
     assert result["language_score"] < 50
     assert result["hard_blockers"]
     assert result["eligible_for_preparation"] is False
+
+
+def test_match_layer_rejects_german_b2_when_cv_only_has_a2():
+    cv = (
+        "Senior Software Engineer with 7+ years experience. "
+        "Python FastAPI Docker REST. Languages: English C1, German A2."
+    )
+    description = (
+        "Backend Software Engineer. Required: Python FastAPI Docker REST. "
+        "German B2 is required for daily team communication."
+    )
+    result = build_match_report(
+        cv,
+        "Backend Software Engineer",
+        description,
+        "Berlin, Germany",
+        False,
+    )
+    assert result["language_score"] < 50
+    assert result["hard_blockers"]
+    assert result["eligible_for_preparation"] is False
