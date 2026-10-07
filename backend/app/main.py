@@ -142,17 +142,45 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
     }
 
 
-def candidate_job_records(cv: CVProfile | None, jobs: list[LiveJob]) -> list[tuple[LiveJob, dict | None]]:
+def _target_role_families(target_roles: str = "") -> set[str]:
+    text = (target_roles or "").lower()
+    families = set()
+    if any(term in text for term in ("backend", "python", "software engineer", "software developer")):
+        families.add("software_backend")
+    if any(term in text for term in ("qa", "automation", "sdet", "test")):
+        families.add("automation_qa")
+    if any(term in text for term in ("data engineer", "data engineering", "etl", "data platform")):
+        families.add("data_engineering")
+    if any(term in text for term in ("ai", "ml", "machine learning", "llm")):
+        families.add("ai_ml")
+    if any(term in text for term in ("frontend", "fullstack", "full stack")):
+        families.add("frontend_fullstack")
+    if any(term in text for term in ("devops", "platform", "sre", "cloud engineer")):
+        families.add("devops_platform")
+    return families
+
+
+def candidate_job_records(
+    cv: CVProfile | None,
+    jobs: list[LiveJob],
+    target_roles: str = "",
+) -> list[tuple[LiveJob, dict | None]]:
     if not cv:
         return [(job, None) for job in jobs]
 
     strongest = {item["skill"] for item in rank_cv_skills(cv.text, limit=10)}
+    target_families = _target_role_families(target_roles)
     records: list[tuple[LiveJob, dict]] = []
     for job in jobs:
         details = match_details(cv, job)
         job_skills = set(details["job_skills"])
+        job_families = set(details["job_role_families"])
         strong_overlap = strongest & job_skills
-        if details["role_score"] < 45:
+        if target_families and job_families and not (target_families & job_families):
+            continue
+        if details["hard_blockers"]:
+            continue
+        if details["overall_score"] < 65 or details["role_score"] < 45:
             continue
         if not strong_overlap and len(details["matched_skills"]) < 2:
             continue
@@ -497,7 +525,7 @@ def jobs(
         if cv:
             records.sort(key=lambda row: row[1]["overall_score"], reverse=True)
     else:
-        records = candidate_job_records(cv, live_jobs)
+        records = candidate_job_records(cv, live_jobs, user.target_roles)
     return [serialize_job(job, details) for job, details in records[: min(max(limit, 1), 500)]]
 
 
@@ -1034,7 +1062,7 @@ def get_cv(user: User = Depends(get_current_user), db: Session = Depends(get_db)
         return {"uploaded": False}
 
     details = refresh_cv_analysis(db, cv)
-    relevant = candidate_job_records(cv, db.query(LiveJob).all())
+    relevant = candidate_job_records(cv, db.query(LiveJob).all(), user.target_roles)
     top_skills = rank_cv_skills(cv.text, [job.skills for job, _ in relevant], limit=12)
     return {
         "uploaded": True,
@@ -1105,7 +1133,7 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     counts = {status: sum(1 for app in apps if app.status == status) for status in statuses}
     interview_count = counts["Interview"] + counts["Final"] + counts["Offer"]
 
-    records = candidate_job_records(cv, all_jobs)
+    records = candidate_job_records(cv, all_jobs, user.target_roles)
     relevant_jobs = [job for job, _ in records]
     today = date.today()
     new_today = sum(1 for job in relevant_jobs if job.posted_at and job.posted_at.date() == today)
@@ -1223,7 +1251,7 @@ async def assistant(
 ):
     cv = latest_cv(db, user.id)
     all_jobs = db.query(LiveJob).all()
-    records = candidate_job_records(cv, all_jobs)
+    records = candidate_job_records(cv, all_jobs, user.target_roles)
     relevant_jobs = [job for job, _ in records]
     apps = db.query(Application).filter(Application.user_id == user.id).all()
 
