@@ -170,8 +170,19 @@ async function load() {
       </div>`;
   }
 
+  const conversion = d.conversion || {};
+  const conversionHtml = conversion.submitted ? `
+    <div class="conversionStats">
+      <div><b>${conversion.positive_response_rate}%</b><small>Positive response</small></div>
+      <div><b>${conversion.interview_rate}%</b><small>Interview rate</small></div>
+      <div><b>${conversion.rejection_rate}%</b><small>Rejection rate</small></div>
+    </div>
+    <div class="conversionDiagnosis">
+      ${(conversion.recommendations || []).map(x=>`<p>→ ${esc(x)}</p>`).join('')}
+    </div>` : '';
   document.querySelector('#performance').innerHTML =
-    head('My Performance','<span class="tag">Real application outcomes</span>') +
+    head('Application Conversion','<span class="tag">Outcome-driven</span>') +
+    conversionHtml +
     (d.performance.length ? d.performance.map(p=>`
       <div class="perf"><span>${esc(p.label)}</span><div class="progress"><i style="width:${p.value}%"></i></div><b>${p.value}%</b></div>
       <small class="muted">${p.applications} applications</small>`).join('')
@@ -766,11 +777,11 @@ async function renderSettingsPage(){
       '</div>' +
       '<div class="card detailPage atsTargets">' +
         '<h2>Direct employer ATS collectors</h2>' +
-        '<p>Configure employers using Lever, SmartRecruiters or Ashby. Refresh Current Jobs will pull public postings, keep Germany/remote-EU technical roles, and put them into the same CV-matching pipeline.</p>' +
+        '<p>Configure employers using Greenhouse, Lever, SmartRecruiters or Ashby. Refresh Current Jobs will pull public postings, keep Germany/remote-EU technical roles, and put them into the same CV-matching pipeline.</p>' +
         '<form id="collectorTargetForm" class="collectorForm">' +
-          '<label>Provider<select name="provider"><option value="ashby">Ashby</option><option value="lever">Lever (global)</option><option value="lever-eu">Lever (EU)</option><option value="smartrecruiters">SmartRecruiters</option></select></label>' +
+          '<label>Provider<select name="provider"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever (global)</option><option value="lever-eu">Lever (EU)</option><option value="smartrecruiters">SmartRecruiters</option></select></label>' +
           '<label>Company label<input name="label" placeholder="Company name" required></label>' +
-          '<label>Job board / company identifier<input name="identifier" placeholder="Ashby: final part of jobs.ashbyhq.com/Company" required></label>' +
+          '<label>Job board / company identifier<input name="identifier" placeholder="Greenhouse: board token · Ashby: final URL segment" required></label>' +
           '<button class="primary" type="submit">Add collector</button>' +
         '</form>' +
         '<div id="collectorTargetsList">' +
