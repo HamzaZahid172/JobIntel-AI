@@ -103,13 +103,25 @@ def _cv_language_level(cv_text: str, language: str) -> str | None:
     names = [language.lower()]
     if language.lower() == "german":
         names.append("deutsch")
+
     for name in names:
-        explicit = re.search(
-            rf"{re.escape(name)}.{{0,24}}\b(a1|a2|b1|b2|c1|c2)\b|\b(a1|a2|b1|b2|c1|c2)\b.{{0,24}}{re.escape(name)}",
+        # Prefer the common CV form "German A2". Keep the allowed gap tight so
+        # "English C1, German A2" cannot accidentally assign C1 to German.
+        after = re.search(
+            rf"\b{re.escape(name)}\b\s*[:\-–—,]?\s*\b(a1|a2|b1|b2|c1|c2)\b",
             lower,
         )
-        if explicit:
-            return next(value.upper() for value in explicit.groups() if value)
+        if after:
+            return after.group(1).upper()
+
+        # Also support compact forms such as "A2 German".
+        before = re.search(
+            rf"\b(a1|a2|b1|b2|c1|c2)\b\s*[:\-–—,]?\s*\b{re.escape(name)}\b",
+            lower,
+        )
+        if before:
+            return before.group(1).upper()
+
         if re.search(rf"(?:native|mother tongue).{{0,20}}{re.escape(name)}|{re.escape(name)}.{{0,20}}(?:native|mother tongue)", lower):
             return "C2"
         if re.search(rf"(?:fluent|professional|business).{{0,20}}{re.escape(name)}|{re.escape(name)}.{{0,20}}(?:fluent|professional|business)", lower):
