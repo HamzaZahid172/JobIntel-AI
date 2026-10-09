@@ -454,12 +454,19 @@ function jobCard(job, compact){
       (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
       '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
       '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
+      '<button class="primary guidedApplyBtn" data-job-id="' + job.id + '">Assisted Apply</button>' +
       '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
 }
 
 function bindTrackButtons(){
+  document.querySelectorAll('.guidedApplyBtn').forEach(function(button){
+    button.onclick=function(){
+      const job=jobMarketCache.find(function(item){return String(item.id)===String(button.dataset.jobId);});
+      if(job)openAssistModal(job);
+    };
+  });
   document.querySelectorAll('.trackJob').forEach(function(button){
     button.onclick = function(){
       const job = jobMarketCache.find(function(x){return String(x.id)===String(button.dataset.jobId);});
@@ -613,6 +620,137 @@ async function renderJobMarket(includeAll){
   document.querySelector('#openImport').onclick=function(){document.querySelector('#importModal').classList.remove('hidden');};
   draw();
 }
+
+const ASSIST_BASE='http://127.0.0.1:3401';
+let activeAssistJob=null;
+let lastAssistStatus=null;
+
+async function assistRequest(path,body){
+  const config={method:body===undefined?'GET':'POST',headers:{"X-JobIntel-Assistant":"1"}};
+  if(body!==undefined){
+    config.headers["Content-Type"]="application/json";
+    config.body=JSON.stringify(body);
+  }
+  let response;
+  try{response=await fetch(ASSIST_BASE+path,config);}
+  catch(err){throw new Error('Local browser assistant is offline. Open a Mac terminal in browser-assistant, then run npm install, npx playwright install chromium, and npm start.');}
+  const result=await response.json();
+  if(!response.ok)throw new Error(result.error||'Local browser assistant error');
+  return result;
+}
+
+async function assistDocument(file){
+  if(!file)return null;
+  if(file.size>8*1024*1024)throw new Error('Each attachment must be 8 MB or less.');
+  if(!/\.(pdf|doc|docx|txt)$/i.test(file.name))throw new Error('Only PDF, DOC, DOCX or TXT attachments are supported.');
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  let binary='';
+  for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  return {name:file.name,mimeType:file.type||'application/octet-stream',base64:btoa(binary)};
+}
+function assistMessage(msg){
+  document.querySelector('#assistMessage').textContent=msg;
+}
+function assistReview(status){
+  lastAssistStatus=status;
+  const target=document.querySelector('#assistReview');
+  if(!status||!status.active){target.textContent='No active session.';return;}
+  const fields=status.fields||[];
+  target.innerHTML='<b>Employer browser: '+esc(status.title||'Application form')+'</b>'+
+    '<p>Stage: '+esc(status.status)+' · '+fields.length+' visible fields · '+fields.filter(function(x){return x.filled;}).length+' filled</p>'+
+    '<a target="_blank" rel="noopener" href="'+esc(status.url)+'">Employer page ↗</a>'+
+    '<h4>Fields to review</h4><ul>'+
+    fields.filter(function(x){return x.required&&!x.filled||x.type==='file'&&!x.filled;}).slice(0,16).map(function(x){
+      return '<li>'+esc(x.label||x.name||x.id||x.type)+' '+(x.required?'(required)':'')+(x.kind?' — '+esc(x.kind):'')+'</li>';
+    }).join('')+'</ul>'+
+    '<p>'+esc((status.notes||[]).slice(-3).join(' | '))+'</p>'+
+    (status.submissionAttempted?'<p><b>Submission was attempted. Verify employer confirmation before recording as Applied.</b></p>':'');
+}
+function openAssistModal(job){
+  if(!job.url){alert('This opportunity has no application link.');return;}
+  activeAssistJob=job;lastAssistStatus=null;
+  document.querySelector('#assistModal').classList.remove('hidden');
+  document.querySelector('#assistStartForm').classList.remove('hidden');
+  document.querySelector('#assistWorkspace').classList.add('hidden');
+  const form=document.querySelector('#assistStartForm');
+  form.reset();
+  const parts=(currentUser.display_name||'').trim().split(/\s+/);
+  form.elements.firstName.value=parts[0]||'';
+  form.elements.lastName.value=parts.slice(1).join(' ')||'';
+  form.elements.email.value=currentUser.email||'';
+  form.elements.country.value='Germany';
+  document.querySelector('#assistJobTitle').textContent=job.title+' · '+job.company;
+  assistMessage('Choose your documents and start the local Chromium assistant. Review each step.');
+}
+function bindAssistedApply(){
+  document.querySelector('#assistCloseModal').onclick=function(){
+    document.querySelector('#assistModal').classList.add('hidden');
+  };
+  document.querySelector('#assistStartForm').onsubmit=async function(event){
+    event.preventDefault();
+    const form=event.currentTarget;
+    const button=form.querySelector('button[type=submit]');
+    button.disabled=true;assistMessage('Starting local Chromium. This may take a few seconds...');
+    try{
+      const fd=new FormData(form);
+      const profile={};
+      ['firstName','lastName','email','phone','city','country','linkedin','github','portfolio'].forEach(function(key){
+        profile[key]=String(fd.get(key)||'').trim();
+      });
+      const documents={};
+      for(const kind of ['cv','cover','experience']){
+        const file=fd.get(kind);
+        if(file&&file.size)documents[kind]=await assistDocument(file);
+      }
+      if(!documents.cv)throw new Error('Select a CV document first.');
+      const status=await assistRequest('/start',{url:activeAssistJob.url,profile,documents});
+      form.classList.add('hidden');
+      document.querySelector('#assistWorkspace').classList.remove('hidden');
+      assistReview(status);assistMessage('Chromium opened. Review the form, then click Fill Known Fields.');
+    }catch(err){assistMessage(err.message);}
+    finally{button.disabled=false;}
+  };
+  for(const item of [
+    ['#assistInspect','/status','Inspect'],
+    ['#assistFill','/fill','Fill Known Fields'],
+    ['#assistNext','/next','Next / Continue']
+  ]){
+    const btn=document.querySelector(item[0]);
+    btn.onclick=async function(){
+      btn.disabled=true;
+      try{
+        const status=await assistRequest(item[1],item[1]==='/status'?undefined:{});
+        assistReview(status);
+        assistMessage(item[2]+' completed. Review the visible employer page and unresolved fields.');
+      }catch(err){assistMessage(err.message);}
+      finally{btn.disabled=false;}
+    };
+  }
+  document.querySelector('#assistSubmit').onclick=async function(){
+    const approval=document.querySelector('#assistApproval').value;
+    if(approval!=='SUBMIT'){assistMessage('Type exactly SUBMIT in the approval field.');return;}
+    if(!confirm('Submit this application to the employer now? Check every form answer and uploaded document first.'))return;
+    try{
+      const status=await assistRequest('/submit',{approval});
+      assistReview(status);
+      assistMessage('Submit was clicked. Verify the confirmation on the employer site. Do not submit twice.');
+    }catch(err){assistMessage(err.message);}
+  };
+  document.querySelector('#assistTrack').onclick=function(){
+    if(!activeAssistJob)return;
+    if(!confirm('Have you verified on the employer website that the application was submitted?'))return;
+    document.querySelector('#assistModal').classList.add('hidden');
+    openApplicationModal(activeAssistJob);
+  };
+  document.querySelector('#assistCloseBrowser').onclick=async function(){
+    try{await assistRequest('/close',{});assistReview({active:false});
+      document.querySelector('#assistStartForm').classList.remove('hidden');
+      document.querySelector('#assistWorkspace').classList.add('hidden');
+      assistMessage('Local browser closed. Uploaded documents have been cleared from worker memory.');
+    }catch(err){assistMessage(err.message);}
+  };
+}
+bindAssistedApply();
 
 async function renderActionCenter(){
   const action=await apiFetch('/api/action-center');
