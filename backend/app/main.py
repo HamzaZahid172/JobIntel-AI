@@ -1170,13 +1170,15 @@ def application_package_cover_letter(
 
 
 @app.get("/api/applications", response_model=list[ApplicationOut])
-def applications(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return (
-        db.query(Application)
-        .filter(Application.user_id == user.id)
-        .order_by(Application.created_at.desc())
-        .all()
-    )
+def applications(
+    active_only: bool = False,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Application).filter(Application.user_id == user.id)
+    if active_only:
+        query = query.filter(Application.status != "Rejected")
+    return query.order_by(Application.created_at.desc()).all()
 
 
 @app.post("/api/applications", response_model=ApplicationOut)
