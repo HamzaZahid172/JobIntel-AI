@@ -1,6 +1,8 @@
+import base64
 import os
 import re
 import secrets
+from email.message import EmailMessage
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
 
@@ -10,6 +12,7 @@ from sqlalchemy.orm import Session
 from .models import Application, GmailConnection, GmailEvent, GmailOAuthState
 
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
@@ -31,14 +34,14 @@ def gmail_configured() -> bool:
     return bool(cfg["client_id"] and cfg["client_secret"] and cfg["redirect_uri"])
 
 
-def create_oauth_state(db: Session, user_id: int) -> GmailOAuthState:
+def create_oauth_state(db: Session, user_id: int, *, allow_send: bool = False) -> GmailOAuthState:
     db.query(GmailOAuthState).filter(
         GmailOAuthState.user_id == user_id,
         GmailOAuthState.expires_at <= datetime.utcnow(),
     ).delete()
     row = GmailOAuthState(
         user_id=user_id,
-        state=secrets.token_urlsafe(32),
+        state=("send_" if allow_send else "read_") + secrets.token_urlsafe(32),
         expires_at=datetime.utcnow() + timedelta(minutes=10),
     )
     db.add(row)
@@ -47,13 +50,13 @@ def create_oauth_state(db: Session, user_id: int) -> GmailOAuthState:
     return row
 
 
-def build_authorization_url(state: str) -> str:
+def build_authorization_url(state: str, *, allow_send: bool = False) -> str:
     cfg = gmail_config()
     params = {
         "client_id": cfg["client_id"],
         "redirect_uri": cfg["redirect_uri"],
         "response_type": "code",
-        "scope": GMAIL_SCOPE,
+        "scope": GMAIL_SCOPE + (" " + GMAIL_SEND_SCOPE if allow_send else ""),
         "access_type": "offline",
         "prompt": "consent",
         "include_granted_scopes": "true",
@@ -120,6 +123,42 @@ def gmail_profile(access_token: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
+
+
+def gmail_can_send(connection: GmailConnection | None) -> bool:
+    return bool(connection and GMAIL_SEND_SCOPE in (connection.scope or "").split())
+
+
+def gmail_send_approved(
+    db: Session,
+    connection: GmailConnection,
+    recipient: str,
+    subject: str,
+    body: str,
+) -> str:
+    """Only called after an authenticated user's explicit Send action."""
+    if not gmail_can_send(connection):
+        raise RuntimeError("Gmail sending is not authorized. Enable sending in Settings.")
+    if not recipient or not subject.strip() or not body.strip():
+        raise ValueError("Recipient, subject and message are required.")
+    message = EmailMessage()
+    message["From"] = connection.google_email
+    message["To"] = recipient
+    message["Subject"] = subject
+    message.set_content(body)
+    token = ensure_access_token(db, connection)
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+    response = httpx.post(
+        f"{GMAIL_API}/users/me/messages/send",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"raw": raw},
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("id"):
+        raise RuntimeError("Gmail did not return a message ID; verify your Sent folder.")
+    return data["id"]
 
 
 def _normalise(value: str) -> str:
