@@ -61,7 +61,8 @@ async function visibleFields(page) {
       return {index,tag:e.tagName.toLowerCase(),type:(e.type||"").toLowerCase(),
         name:e.name||"",id:e.id||"",placeholder:e.placeholder||"",
         autocomplete:e.autocomplete||"",label:label.slice(0,180),required:!!e.required,
-        filled:e.type==="checkbox"||e.type==="radio"?e.checked:!!e.value,
+        filled:e.type==="radio"&&e.name?Array.from(document.getElementsByName(e.name)).some(x=>x.checked):
+          e.type==="checkbox"?e.checked:!!e.value,
         visible:!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length)};
     }).filter(x=>x.visible&&x.type!=="hidden"&&x.type!=="password").slice(0,120);
   });
@@ -131,6 +132,9 @@ async function fill() {
 }
 async function clickNext() {
   if(!session)throw Error("Start an application first.");
+  const currentFields=await visibleFields(session.page);
+  const hasApplicationForm=currentFields.some(x=>x.type==="file"||x.type==="email")||
+    currentFields.filter(x=>x.required).length>=2;
   const buttons=await session.page.locator("button,input[type=submit],a").all();
   let found=null;
   for(const button of buttons){
@@ -138,8 +142,9 @@ async function clickNext() {
       if(!await button.isVisible())continue;
       const text=(await button.innerText().catch(()=>'')) ||
         (await button.getAttribute("value")) || (await button.getAttribute("aria-label")) || "";
-      if(submissionLabel(text))continue;
-      if(nextLabel(text)){found=button;break;}
+      const initialApply=!hasApplicationForm && /^apply now$/i.test(text.trim());
+      if(submissionLabel(text)&&!initialApply)continue;
+      if(initialApply||nextLabel(text)){found=button;break;}
     }catch{}
   }
   if(!found)throw Error("No safe Next/Continue button found. Click the next step manually in Chromium.");
@@ -153,7 +158,7 @@ async function submit(approval) {
   if(approval!=="SUBMIT")throw Error("Type SUBMIT to authorize exactly this submission.");
   if(session.submissionAttempted)throw Error("Submission already attempted; verify the employer website.");
   const fields=await visibleFields(session.page);
-  const missing=fields.filter(x=>x.required&&!x.filled&&x.type!=="checkbox"&&x.type!=="radio"&&x.type!=="file");
+  const missing=fields.filter(x=>x.required&&!x.filled);
   if(missing.length)throw Error("Required fields still empty: "+missing.slice(0,6).map(x=>x.label||x.name||"unnamed field").join(", "));
   const buttons=await session.page.locator("button,input[type=submit]").all();
   const matched=[];
