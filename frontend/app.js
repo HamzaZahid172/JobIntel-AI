@@ -524,7 +524,7 @@ async function downloadCoverLetter(jobId, button){
   }
 }
 
-async function prepareApplication(jobId, button){
+async function prepareApplication(jobId, button, cvId=null){
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = 'Preparing…';
@@ -532,7 +532,7 @@ async function prepareApplication(jobId, button){
     const prepared = await apiFetch('/api/jobs/' + jobId + '/prepare-application', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({minimum_match:70})
+      body:JSON.stringify({minimum_match:70,cv_id:cvId})
     });
     button.textContent = prepared.status === 'Package Ready' ? 'Package ready ✓' : 'Needs review ✓';
     setTimeout(function(){ button.textContent = originalText; }, 1600);
@@ -659,6 +659,11 @@ async function renderActionCenter(){
 async function showTailorCv(jobId){
   const modal=document.querySelector('#tailorModal');
   const versionSelect=document.querySelector('#tailorVersion');
+  const prepButton=document.querySelector('#prepareWithSelectedCv');
+  prepButton.onclick=async function(){
+    await prepareApplication(jobId,prepButton,Number(versionSelect.value));
+    modal.classList.add('hidden');
+  };
   const draftArea=document.querySelector('#tailorDraft');
   modal.classList.remove('hidden');
   draftArea.value='Loading CV evidence…';
