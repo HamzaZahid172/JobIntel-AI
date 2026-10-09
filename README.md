@@ -32,6 +32,24 @@ Local-first, zero-paid-service career intelligence platform for Germany-focused 
 
 JobIntel **does not auto-submit job applications or send Gmail messages**. It uses Gmail read-only scope, and cannot send emails with that scope. Review every application, CV suggestion and outreach draft before using it. For Gmail/Remotive integration specifics and API endpoints, see `docs/JOB_ACQUISITION_P0_P1.md`.
 
+## Job Acquisition v1.1 — Guided Applications and Gmail Send (opt-in)
+
+JobIntel now offers a **local Playwright companion** for guided application forms. This runs on your own computer, independently of Docker. It can open a public employer job link, fill recognizable profile fields, attach CV/cover/experience documents chosen in the dashboard, inspect the form, and move between safe intermediate steps. It **never submits without your explicit SUBMIT approval**. Different ATS portals are not guaranteed to work; manual login, CAPTCHA, consent and unsupported fields remain under your control.
+
+```bash
+cd browser-assistant
+npm install
+npx playwright install chromium
+npm start
+```
+
+Open http://localhost:3100 → **Job Market / Action Center → Assisted Apply**. After the employer confirms submission in Chromium, use the tracker to record it. **Do not treat a button click alone as confirmation.**
+
+- **ATS Review:** Each job has a local job-specific ATS simulation against the selected CV; it checks required-skill evidence and CV parsing but is not a certified ATS approval score.
+- **Gmail Follow-up:** Drafts are editable. Gmail read-only works as before. To enable *sending*, first add `https://www.googleapis.com/auth/gmail.send` in Google Auth Platform → Data Access for your existing OAuth project; then JobIntel Settings → **Enable Gmail sending** and grant consent. Only a manually reviewed follow-up with a verified recipient is sent on an explicit click. If you do not grant permission, copy/manual send still works.
+
+See `browser-assistant/README.md` and `docs/GUIDED_APPLICATIONS_AND_EMAIL.md` for setup, supported fields, security boundaries and known limitations.
+
 ## Run
 
 ```bash

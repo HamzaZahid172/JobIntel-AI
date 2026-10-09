@@ -26,3 +26,9 @@ jobs:
         with:
           node-version: '22'
       - run: node --check frontend/app.js
+      - name: Check local browser assistant syntax
+        run: |
+          node --check browser-assistant/server.js
+          node --check browser-assistant/form-tools.js
+      - name: Run Playwright companion unit tests
+        run: node --test browser-assistant/test/*.test.js

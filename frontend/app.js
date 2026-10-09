@@ -454,12 +454,20 @@ function jobCard(job, compact){
       (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
       '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
       '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
+      '<button class="primary guidedApplyBtn" data-job-id="' + job.id + '">Assisted Apply</button>' +
+      '<button class="secondary atsReviewBtn" data-job-id="' + job.id + '">ATS Review</button>' +
       '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
 }
 
 function bindTrackButtons(){
+  document.querySelectorAll('.guidedApplyBtn').forEach(function(button){
+    button.onclick=function(){
+      const job=jobMarketCache.find(function(item){return String(item.id)===String(button.dataset.jobId);});
+      if(job)openAssistModal(job);
+    };
+  });
   document.querySelectorAll('.trackJob').forEach(function(button){
     button.onclick = function(){
       const job = jobMarketCache.find(function(x){return String(x.id)===String(button.dataset.jobId);});
@@ -473,6 +481,9 @@ function bindTrackButtons(){
     };
   });
 
+  document.querySelectorAll('.atsReviewBtn').forEach(function(button){
+    button.onclick=function(){showAtsReview(button.dataset.jobId);};
+  });
   document.querySelectorAll('.tailorCvBtn').forEach(function(button){
     button.onclick=function(){showTailorCv(button.dataset.jobId);};
   });
@@ -614,50 +625,241 @@ async function renderJobMarket(includeAll){
   draw();
 }
 
+const ASSIST_BASE='http://127.0.0.1:3401';
+let activeAssistJob=null;
+let lastAssistStatus=null;
+
+async function assistRequest(path,body){
+  const config={method:body===undefined?'GET':'POST',headers:{"X-JobIntel-Assistant":"1"}};
+  if(body!==undefined){
+    config.headers["Content-Type"]="application/json";
+    config.body=JSON.stringify(body);
+  }
+  let response;
+  try{response=await fetch(ASSIST_BASE+path,config);}
+  catch(err){throw new Error('Local browser assistant is offline. Open a Mac terminal in browser-assistant, then run npm install, npx playwright install chromium, and npm start.');}
+  const result=await response.json();
+  if(!response.ok)throw new Error(result.error||'Local browser assistant error');
+  return result;
+}
+
+async function assistDocument(file){
+  if(!file)return null;
+  if(file.size>8*1024*1024)throw new Error('Each attachment must be 8 MB or less.');
+  if(!/\.(pdf|doc|docx|txt)$/i.test(file.name))throw new Error('Only PDF, DOC, DOCX or TXT attachments are supported.');
+  const bytes=new Uint8Array(await file.arrayBuffer());
+  let binary='';
+  for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
+  return {name:file.name,mimeType:file.type||'application/octet-stream',base64:btoa(binary)};
+}
+function assistMessage(msg){
+  document.querySelector('#assistMessage').textContent=msg;
+}
+function assistReview(status){
+  lastAssistStatus=status;
+  const target=document.querySelector('#assistReview');
+  if(!status||!status.active){target.textContent='No active session.';return;}
+  const fields=status.fields||[];
+  target.innerHTML='<b>Employer browser: '+esc(status.title||'Application form')+'</b>'+
+    '<p>Stage: '+esc(status.status)+' · '+fields.length+' visible fields · '+fields.filter(function(x){return x.filled;}).length+' filled</p>'+
+    '<a target="_blank" rel="noopener" href="'+esc(status.url)+'">Employer page ↗</a>'+
+    '<h4>Fields to review</h4><ul>'+
+    fields.filter(function(x){return x.required&&!x.filled||x.type==='file'&&!x.filled;}).slice(0,16).map(function(x){
+      return '<li>'+esc(x.label||x.name||x.id||x.type)+' '+(x.required?'(required)':'')+(x.kind?' — '+esc(x.kind):'')+'</li>';
+    }).join('')+'</ul>'+
+    '<p>'+esc((status.notes||[]).slice(-3).join(' | '))+'</p>'+
+    (status.submissionAttempted?'<p><b>Submission was attempted. Verify employer confirmation before recording as Applied.</b></p>':'');
+}
+function openAssistModal(job){
+  if(!job.url){alert('This opportunity has no application link.');return;}
+  activeAssistJob=job;lastAssistStatus=null;
+  document.querySelector('#assistModal').classList.remove('hidden');
+  document.querySelector('#assistStartForm').classList.remove('hidden');
+  document.querySelector('#assistWorkspace').classList.add('hidden');
+  const form=document.querySelector('#assistStartForm');
+  form.reset();
+  const parts=(currentUser.display_name||'').trim().split(/\s+/);
+  form.elements.firstName.value=parts[0]||'';
+  form.elements.lastName.value=parts.slice(1).join(' ')||'';
+  form.elements.email.value=currentUser.email||'';
+  form.elements.country.value='Germany';
+  document.querySelector('#assistJobTitle').textContent=job.title+' · '+job.company;
+  assistMessage('Choose your documents and start the local Chromium assistant. Review each step.');
+}
+function bindAssistedApply(){
+  document.querySelector('#assistCloseModal').onclick=function(){
+    document.querySelector('#assistModal').classList.add('hidden');
+  };
+  document.querySelector('#assistStartForm').onsubmit=async function(event){
+    event.preventDefault();
+    const form=event.currentTarget;
+    const button=form.querySelector('button[type=submit]');
+    button.disabled=true;assistMessage('Starting local Chromium. This may take a few seconds...');
+    try{
+      const fd=new FormData(form);
+      const profile={};
+      ['firstName','lastName','email','phone','city','country','linkedin','github','portfolio'].forEach(function(key){
+        profile[key]=String(fd.get(key)||'').trim();
+      });
+      const documents={};
+      for(const kind of ['cv','cover','experience']){
+        const file=fd.get(kind);
+        if(file&&file.size)documents[kind]=await assistDocument(file);
+      }
+      if(!documents.cv)throw new Error('Select a CV document first.');
+      const status=await assistRequest('/start',{url:activeAssistJob.url,profile,documents});
+      form.classList.add('hidden');
+      document.querySelector('#assistWorkspace').classList.remove('hidden');
+      assistReview(status);assistMessage('Chromium opened. Review the form, then click Fill Known Fields.');
+    }catch(err){assistMessage(err.message);}
+    finally{button.disabled=false;}
+  };
+  for(const item of [
+    ['#assistInspect','/status','Inspect'],
+    ['#assistFill','/fill','Fill Known Fields'],
+    ['#assistNext','/next','Next / Continue']
+  ]){
+    const btn=document.querySelector(item[0]);
+    btn.onclick=async function(){
+      btn.disabled=true;
+      try{
+        const status=await assistRequest(item[1],item[1]==='/status'?undefined:{});
+        assistReview(status);
+        assistMessage(item[2]+' completed. Review the visible employer page and unresolved fields.');
+      }catch(err){assistMessage(err.message);}
+      finally{btn.disabled=false;}
+    };
+  }
+  document.querySelector('#assistSubmit').onclick=async function(){
+    const approval=document.querySelector('#assistApproval').value;
+    if(approval!=='SUBMIT'){assistMessage('Type exactly SUBMIT in the approval field.');return;}
+    if(!confirm('Submit this application to the employer now? Check every form answer and uploaded document first.'))return;
+    try{
+      const status=await assistRequest('/submit',{approval});
+      assistReview(status);
+      assistMessage('Submit was clicked. Verify the confirmation on the employer site. Do not submit twice.');
+    }catch(err){assistMessage(err.message);}
+  };
+  document.querySelector('#assistTrack').onclick=function(){
+    if(!activeAssistJob)return;
+    if(!confirm('Have you verified on the employer website that the application was submitted?'))return;
+    document.querySelector('#assistModal').classList.add('hidden');
+    openApplicationModal(activeAssistJob);
+  };
+  document.querySelector('#assistCloseBrowser').onclick=async function(){
+    try{await assistRequest('/close',{});assistReview({active:false});
+      document.querySelector('#assistStartForm').classList.remove('hidden');
+      document.querySelector('#assistWorkspace').classList.add('hidden');
+      assistMessage('Local browser closed. Uploaded documents have been cleared from worker memory.');
+    }catch(err){assistMessage(err.message);}
+  };
+}
+bindAssistedApply();
+
 async function renderActionCenter(){
-  const action=await apiFetch('/api/action-center');
+  const results=await Promise.all([
+    apiFetch('/api/action-center'),
+    apiFetch('/api/gmail/status').catch(function(){return {connected:false,can_send:false};})
+  ]);
+  const action=results[0],gmail=results[1];
   const page=document.querySelector('#pageContent');
   jobMarketCache=(action.opportunities||[]).map(function(row){return row.job;});
   page.innerHTML='<div class="pageIntro"><h2>Today’s Job Action Queue</h2>' +
-    '<p>Apply to strong matches and review each application before submission. Opportunity scores are priority heuristics, not hiring probabilities.</p></div>' +
+    '<p>Apply to strong engineering matches. Every browser-assisted submission needs your approval.</p></div>' +
     '<div class="analyticsSummary">' +
     '<div class="card analyticsMini"><small>Apply Now</small><b>'+action.apply_now+'</b></div>' +
     '<div class="card analyticsMini"><small>Review</small><b>'+action.review+'</b></div>' +
     '<div class="card analyticsMini"><small>Follow-ups due</small><b>'+action.followups.length+'</b></div></div>' +
-    (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs CV evidence.</p></div>':'') +
+    (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs evidence from your CV.</p></div>':'') +
     '<div class="pageIntro"><h3>Best current opportunities</h3></div>' +
-    '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No eligible opportunities in the current feed. Refresh jobs or expand employer ATS sources.'))+'</div>' +
-    '<div class="pageIntro"><h3>Follow-up assistant</h3><p>These are drafts only. Copy, review and send manually, then mark as sent.</p></div>' +
-    '<div class="followupGrid">'+(action.followups.map(function(f){
-      return '<article class="card followupCard"><h3>'+esc(f.role)+'</h3><p>'+esc(f.company)+' · '+f.days_waiting+' days waiting</p>' +
-        '<label>Subject<input readonly value="'+esc(f.subject)+'"></label>' +
-        '<label>Email draft<textarea readonly rows="8" id="followupDraft'+f.application_id+'">'+esc(f.body)+'</textarea></label>' +
-        '<div class="prepActions"><button class="secondary followupCopy" data-app-id="'+f.application_id+'">Copy email</button>' +
-        '<button class="primary followupSent" data-app-id="'+f.application_id+'">I sent this follow-up</button></div></article>';
+    '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No strong matching openings in the current feed. Refresh jobs or add employer ATS collectors.'))+'</div>' +
+    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>Edit the message and enter a verified recruiter address before sending. Gmail Send requires separate consent.</p></div>' +
+    '<div class="followupGrid">'+(action.followups.map(function(row){
+      return '<article class="card followupCard" data-app-id="'+row.application_id+'">'+
+        '<h3>'+esc(row.role)+'</h3><p>'+esc(row.company)+' · '+row.days_waiting+' days waiting</p>'+
+        '<label>Recruiter email address (enter verified address)<input class="followupTo" type="email" placeholder="recruiter@company.com"></label>'+
+        '<label>Email subject<input class="followupSubject" value="'+esc(row.subject)+'"></label>'+
+        '<label>Editable email draft<textarea class="followupBody" rows="9">'+esc(row.body)+'</textarea></label>'+
+        '<div class="prepActions">'+
+        '<button type="button" class="secondary followupCopy">Copy draft</button>'+
+        (gmail.can_send?'<button type="button" class="primary followupSend">Review & Send via Gmail</button>':
+         '<button type="button" class="secondary followupEnableGmail">Enable Gmail sending</button>')+
+        '<button type="button" class="secondary followupSent">I sent this externally</button></div>'+
+        '<small>'+(gmail.can_send?'Gmail send is authorized; no email is sent without clicking Review & Send.':'Gmail read-only remains available; enable Send separately in Settings.')+'</small>'+
+        '</article>';
     }).join('')||empty('No follow-ups are due right now.'))+'</div>';
   bindTrackButtons();
-  document.querySelectorAll('.followupCopy').forEach(function(btn){
-    btn.onclick=async function(){
-      const row=action.followups.find(function(f){return String(f.application_id)===btn.dataset.appId;});
-      if(!row)return;
-      try{await navigator.clipboard.writeText('Subject: '+row.subject+'\n\n'+row.body);btn.textContent='Copied ✓';}
-      catch(err){alert('Copy unavailable; select the draft text manually.');}
+  document.querySelectorAll('.followupCard').forEach(function(card){
+    const id=Number(card.dataset.appId);
+    const addr=card.querySelector('.followupTo');
+    const subject=card.querySelector('.followupSubject');
+    const body=card.querySelector('.followupBody');
+    card.querySelector('.followupCopy').onclick=async function(){
+      try{await navigator.clipboard.writeText('To: '+addr.value+'\nSubject: '+subject.value+'\n\n'+body.value);
+        this.textContent='Copied ✓';
+      }catch(err){alert('Copy unavailable; select the message text manually.');}
     };
-  });
-  document.querySelectorAll('.followupSent').forEach(function(btn){
-    btn.onclick=async function(){
-      if(!confirm('Confirm that you actually sent this follow-up outside JobIntel?'))return;
+    const enable=card.querySelector('.followupEnableGmail');
+    if(enable)enable.onclick=function(){routeTo('settings');};
+    const send=card.querySelector('.followupSend');
+    if(send)send.onclick=async function(){
+      const recipient=addr.value.trim();
+      if(!recipient || !addr.checkValidity()){alert('Enter one verified recruiter email address first.');return;}
+      if(!subject.value.trim()||!body.value.trim()){alert('Review subject and message first.');return;}
+      if(!confirm('Send this exact message from your connected Gmail account to '+recipient+'?'))return;
+      send.disabled=true;
       try{
-        await apiFetch('/api/applications/'+btn.dataset.appId+'/follow-up-sent',{method:'POST'});
+        await apiFetch('/api/applications/'+id+'/send-follow-up',{method:'POST',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            recipient,subject:subject.value.trim(),body:body.value.trim()
+          })});
+        alert('Gmail accepted the message. You can verify it in your Sent folder.');
+        await renderActionCenter();
+      }catch(err){alert('Gmail send did not complete: '+err.message);send.disabled=false;}
+    };
+    card.querySelector('.followupSent').onclick=async function(){
+      if(!confirm('Confirm you already sent this follow-up outside JobIntel?'))return;
+      try{await apiFetch('/api/applications/'+id+'/follow-up-sent',{method:'POST'});
         await renderActionCenter();
       }catch(err){alert('Could not record follow-up: '+err.message);}
     };
   });
 }
 
+async function showAtsReview(jobId){
+  const modal=document.querySelector('#tailorModal');
+  const versionSelect=document.querySelector('#tailorVersion');
+  const output=document.querySelector('#tailorDraft');
+  modal.classList.remove('hidden');
+  modal.querySelector('h3').textContent='Job-specific ATS Simulation';
+  output.value='Evaluating CV against job requirements...';
+  document.querySelector('#prepareWithSelectedCv').classList.add('hidden');
+  try{
+    const cvs=await apiFetch('/api/cv/versions');
+    if(!cvs.length)throw new Error('Upload a CV first.');
+    versionSelect.innerHTML=cvs.map(function(cv){return '<option value="'+cv.id+'">'+esc(cv.filename)+'</option>';}).join('');
+    async function read(){
+      const payload=await apiFetch('/api/jobs/'+jobId+'/ats-review?cv_id='+versionSelect.value);
+      const a=payload.assessment;
+      output.value=a.label+'\n\nCurrent CV: '+payload.cv_filename+
+        '\nJob-specific match: '+a.job_match_score+'%'+
+        '\nGeneric CV ATS readiness: '+a.ats_readiness+'/100'+
+        '\nRequired skill coverage: '+(a.required_skill_coverage===null?'Not measured':a.required_skill_coverage+'%')+
+        '\n\nSkills supported by CV: '+(a.required_skills_found||[]).join(', ')+
+        '\nMissing evidence (do not fabricate): '+(a.required_skills_missing||[]).join(', ')+
+        '\nBlockers: '+(a.hard_blockers||[]).join('; ')+
+        '\n\nReadability checks: '+JSON.stringify(a.cv_parse_checks,null,2)+
+        '\n\nRecommendations:\n'+(a.suggestions||[]).map(function(x){return '• '+x;}).join('\n')+
+        '\n\nThis is a LOCAL simulator, not approval by an employer ATS.';
+    }
+    versionSelect.onchange=read;await read();
+  }catch(err){output.value=err.message;}
+}
 
 async function showTailorCv(jobId){
   const modal=document.querySelector('#tailorModal');
+  modal.querySelector('h3').textContent='Evidence-based CV Tailoring';
+  document.querySelector('#prepareWithSelectedCv').classList.remove('hidden');
   const versionSelect=document.querySelector('#tailorVersion');
   const prepButton=document.querySelector('#prepareWithSelectedCv');
   prepButton.onclick=async function(){
@@ -901,11 +1103,11 @@ async function renderSettingsPage(){
         '<h2>Gmail application tracking</h2>' +
         '<p>Connect Gmail with read-only access. JobIntel scans recent messages, matches them to tracked applications, and can update outcomes such as Screening, Interview, Offer or Rejected.</p>' +
         (gmail.connected
-          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button><button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
+          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button>'+(gmail.can_send?'<span class="pill good">Send authorized</span>':'<button id="gmailSendPermissionButton" class="secondary" type="button">Enable Gmail sending</button>')+'<button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
           : (gmail.configured
               ? '<p><span class="pill warn">Not connected</span></p><button id="gmailConnectButton" class="primary" type="button">Connect Gmail</button>'
               : '<p><span class="pill warn">OAuth setup required</span></p><p class="muted">Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_GMAIL_REDIRECT_URI in your .env, then rebuild the backend.</p>')) +
-        '<p class="policyNote">Permission used: Gmail read-only. JobIntel does not send, delete or modify email.</p>' +
+        '<p class="policyNote">'+(gmail.can_send?'Gmail read and send enabled. Sending is never automatic: you review each recipient and message before clicking Send.':'Gmail read-only is active. For sending, add gmail.send to Google Cloud Data Access and click Enable Gmail sending to authorize it separately.')+'</p>' +
       '</div>' +
       '<div class="card detailPage atsTargets">' +
         '<h2>Direct employer ATS collectors</h2>' +
@@ -943,6 +1145,16 @@ async function renderSettingsPage(){
         const result=await apiFetch('/api/gmail/connect',{method:'POST'});
         window.open(result.authorization_url,'_blank','noopener');
       }catch(err){alert('Gmail connection could not start: '+err.message);}
+    };
+  }
+  if(document.querySelector('#gmailSendPermissionButton')){
+    document.querySelector('#gmailSendPermissionButton').onclick=async function(){
+      if(!confirm('Google will ask for an additional gmail.send permission. Continue?'))return;
+      try{
+        const r=await apiFetch('/api/gmail/enable-send',{method:'POST'});
+        window.open(r.authorization_url,'_blank','noopener');
+        alert('Authorize Gmail Send in the opened Google tab, then refresh Settings.');
+      }catch(err){alert('Gmail Send authorization could not start: '+err.message);}
     };
   }
   if(document.querySelector('#gmailSyncButton')){

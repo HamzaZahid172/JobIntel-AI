@@ -2,7 +2,9 @@ import base64
 import hashlib
 import json
 import logging
+import re
 import secrets
+from email.utils import parseaddr
 
 import httpx
 from collections import Counter
@@ -18,6 +20,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .ats_simulator import ats_review as evaluate_cv_ats
 from .application_preparation import build_application_package_payload
 from .job_acquisition import (
     cv_tailoring_draft,
@@ -52,6 +55,8 @@ from .gmail_sync import (
     create_oauth_state,
     exchange_code,
     gmail_configured,
+    gmail_can_send,
+    gmail_send_approved,
     gmail_profile,
     serialize_event,
     sync_gmail,
@@ -71,6 +76,7 @@ from .models import (
 from .schemas import (
     ApplicationCreate,
     ApplicationOut,
+    ApprovedFollowupSend,
     ApplicationPackageAnswerUpdate,
     ApplicationPreparationRequest,
     ApplicationUpdate,
@@ -540,6 +546,7 @@ def gmail_status(
             else None
         ),
         "scope": connection.scope if connection else None,
+        "can_send": gmail_can_send(connection),
     }
 
 
@@ -555,6 +562,20 @@ def gmail_connect(
         )
     state = create_oauth_state(db, user.id)
     return {"authorization_url": build_authorization_url(state.state)}
+
+
+@app.post("/api/gmail/enable-send")
+def gmail_enable_send(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not gmail_configured():
+        raise HTTPException(503, "Gmail OAuth is not configured.")
+    connection = db.query(GmailConnection).filter(GmailConnection.user_id == user.id).first()
+    if not connection:
+        raise HTTPException(400, "Connect Gmail read-only first.")
+    state = create_oauth_state(db, user.id, allow_send=True)
+    return {"authorization_url": build_authorization_url(state.state, allow_send=True)}
 
 
 @app.get("/api/gmail/callback", response_class=HTMLResponse)
@@ -854,6 +875,68 @@ def mark_followup_sent(
     db.commit()
     return {"ok": True, "application_id": app.id,
             "sent_at": date.today().isoformat()}
+
+
+@app.post("/api/applications/{application_id}/send-follow-up")
+def send_followup(
+    application_id: int,
+    payload: ApprovedFollowupSend,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    application = (
+        db.query(Application)
+        .filter(Application.id == application_id, Application.user_id == user.id)
+        .first()
+    )
+    if not application:
+        raise HTTPException(404, "Application not found.")
+    if not followup_due(application):
+        raise HTTPException(409, "This application is closed or the next follow-up is not due.")
+    connection = db.query(GmailConnection).filter(GmailConnection.user_id == user.id).first()
+    if not gmail_can_send(connection):
+        raise HTTPException(403, "Enable Gmail Send permission in Settings before sending.")
+    recipient = payload.recipient.strip()
+    if (
+        not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", recipient)
+        or "\n" in recipient or "\r" in recipient
+    ):
+        raise HTTPException(400, "Enter one valid verified recruiter email address.")
+    local = recipient.split("@", 1)[0].lower().replace("-", "").replace("_", "")
+    if "noreply" in local or "donotreply" in local:
+        raise HTTPException(400, "Do not send a follow-up to a no-reply address.")
+    try:
+        message_id = gmail_send_approved(db, connection, recipient, payload.subject.strip(), payload.body.strip())
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("Gmail send failed for application %s", application_id)
+        raise HTTPException(502, "Gmail did not accept the message. Check permissions and retry carefully.") from exc
+    application.notes = ((application.notes or "").rstrip() + f"\nFollow-up sent: {date.today().isoformat()}").strip()
+    db.commit()
+    return {"sent": True, "message_id": message_id, "application_id": application.id}
+
+
+@app.get("/api/jobs/{job_id}/ats-review")
+def job_ats_review(
+    job_id: int,
+    cv_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    cv = (
+        db.query(CVProfile)
+        .filter(CVProfile.id == cv_id, CVProfile.user_id == user.id)
+        .first()
+        if cv_id is not None else latest_cv(db, user.id)
+    )
+    if not cv:
+        raise HTTPException(400, "Upload or select your CV first.")
+    return {"cv_filename": cv.filename, "job": serialize_job(job),
+            "assessment": evaluate_cv_ats(cv.text, match_details(cv, job))}
 
 
 @app.get("/api/jobs/{job_id}/match-report")
