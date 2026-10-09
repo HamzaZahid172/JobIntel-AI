@@ -40,7 +40,7 @@ def test_source_analytics_lists_supported_sources_even_with_zero_jobs():
     rows = build_source_analytics(FakeDB(targets), 1, jobs, jobs)
     by_source = {row["source"]: row for row in rows}
 
-    assert set(["Arbeitnow", "Jobicy", "Ashby", "Lever", "SmartRecruiters", "Greenhouse"]).issubset(by_source)
+    assert set(["Arbeitnow", "Jobicy", "Remotive", "Ashby", "Lever", "SmartRecruiters", "Greenhouse"]).issubset(by_source)
     assert by_source["Ashby"]["status"] == "configured"
     assert by_source["Ashby"]["jobs"] == 1
     assert by_source["Lever"]["status"] == "not configured"
