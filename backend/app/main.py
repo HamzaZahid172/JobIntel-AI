@@ -3,15 +3,17 @@ import hashlib
 import json
 import logging
 import secrets
+
+import httpx
 from collections import Counter
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 
 from docx import Document
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
@@ -39,7 +41,27 @@ from .intelligence import (
     rank_cv_skills,
 )
 from .match_layer import build_match_report
-from .models import Application, ApplicationPackage, CVProfile, CollectorTarget, Job, LiveJob, User
+from .gmail_sync import (
+    build_authorization_url,
+    create_oauth_state,
+    exchange_code,
+    gmail_configured,
+    gmail_profile,
+    serialize_event,
+    sync_gmail,
+)
+from .models import (
+    Application,
+    ApplicationPackage,
+    CVProfile,
+    CollectorTarget,
+    GmailConnection,
+    GmailEvent,
+    GmailOAuthState,
+    Job,
+    LiveJob,
+    User,
+)
 from .schemas import (
     ApplicationCreate,
     ApplicationOut,
@@ -488,6 +510,142 @@ def update_profile(
     db.commit()
     db.refresh(user)
     return user_payload(user)
+
+
+@app.get("/api/gmail/status")
+def gmail_status(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    connection = (
+        db.query(GmailConnection)
+        .filter(GmailConnection.user_id == user.id)
+        .first()
+    )
+    return {
+        "configured": gmail_configured(),
+        "connected": bool(connection),
+        "google_email": connection.google_email if connection else None,
+        "last_synced_at": (
+            connection.last_synced_at.isoformat()
+            if connection and connection.last_synced_at
+            else None
+        ),
+        "scope": connection.scope if connection else None,
+    }
+
+
+@app.post("/api/gmail/connect")
+def gmail_connect(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not gmail_configured():
+        raise HTTPException(
+            503,
+            "Gmail OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+        )
+    state = create_oauth_state(db, user.id)
+    return {"authorization_url": build_authorization_url(state.state)}
+
+
+@app.get("/api/gmail/callback", response_class=HTMLResponse)
+def gmail_callback(
+    code: str,
+    state: str,
+    db: Session = Depends(get_db),
+):
+    oauth_state = (
+        db.query(GmailOAuthState)
+        .filter(
+            GmailOAuthState.state == state,
+            GmailOAuthState.expires_at > datetime.utcnow(),
+        )
+        .first()
+    )
+    if not oauth_state:
+        raise HTTPException(400, "Gmail connection request expired. Start again from Settings.")
+
+    try:
+        token = exchange_code(code)
+        access_token = token["access_token"]
+        profile = gmail_profile(access_token)
+    except Exception as exc:
+        logger.exception("Gmail OAuth callback failed.")
+        raise HTTPException(502, "Google authorization could not be completed.") from exc
+
+    connection = (
+        db.query(GmailConnection)
+        .filter(GmailConnection.user_id == oauth_state.user_id)
+        .first()
+    )
+    if not connection:
+        connection = GmailConnection(
+            user_id=oauth_state.user_id,
+            access_token=access_token,
+        )
+        db.add(connection)
+
+    connection.access_token = access_token
+    if token.get("refresh_token"):
+        connection.refresh_token = token["refresh_token"]
+    connection.token_expires_at = datetime.utcnow() + timedelta(
+        seconds=max(int(token.get("expires_in", 3600)) - 60, 60)
+    )
+    connection.scope = token.get("scope", connection.scope)
+    connection.google_email = profile.get("emailAddress", "")
+    connection.connected_at = datetime.utcnow()
+
+    db.delete(oauth_state)
+    db.commit()
+
+    return HTMLResponse(
+        "<html><body style='font-family:system-ui;padding:40px'>"
+        "<h2>Gmail connected to JobIntel AI</h2>"
+        "<p>You can close this tab and return to JobIntel Settings.</p>"
+        "</body></html>"
+    )
+
+
+@app.post("/api/gmail/sync")
+def gmail_sync_now(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        return sync_gmail(db, user.id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("Gmail sync failed.")
+        raise HTTPException(502, "Gmail could not be reached. Try reconnecting if this persists.") from exc
+
+
+@app.get("/api/gmail/events")
+def gmail_events(
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(GmailEvent)
+        .filter(GmailEvent.user_id == user.id)
+        .order_by(GmailEvent.received_at.desc().nullslast(), GmailEvent.created_at.desc())
+        .limit(min(max(limit, 1), 200))
+        .all()
+    )
+    return [serialize_event(row) for row in rows]
+
+
+@app.delete("/api/gmail/disconnect")
+def gmail_disconnect(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    db.query(GmailConnection).filter(GmailConnection.user_id == user.id).delete()
+    db.query(GmailOAuthState).filter(GmailOAuthState.user_id == user.id).delete()
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/api/sources")
