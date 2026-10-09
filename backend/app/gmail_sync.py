@@ -250,6 +250,10 @@ def _apply_outcome(app: Application, outcome: str) -> bool:
     return False
 
 
+def _gmail_message_query(days: int) -> str:
+    return f"in:anywhere -in:spam newer_than:{max(days, 1)}d"
+
+
 def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100) -> dict:
     connection = (
         db.query(GmailConnection)
@@ -273,10 +277,11 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100
         db.commit()
         return {"scanned": 0, "matched": 0, "updated": 0, "events": 0, "outcomes": {}}
 
+    gmail_query = _gmail_message_query(days)
     listing = httpx.get(
         f"{GMAIL_API}/users/me/messages",
         headers=headers,
-        params={"q": f"newer_than:{max(days, 1)}d", "maxResults": min(max(max_results, 1), 250)},
+        params={"q": gmail_query, "maxResults": min(max(max_results, 1), 250)},
         timeout=20,
     )
     if listing.status_code == 401 and connection.refresh_token:
@@ -286,7 +291,7 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100
         listing = httpx.get(
             f"{GMAIL_API}/users/me/messages",
             headers=headers,
-            params={"q": f"newer_than:{max(days, 1)}d", "maxResults": min(max(max_results, 1), 250)},
+            params={"q": gmail_query, "maxResults": min(max(max_results, 1), 250)},
             timeout=20,
         )
     listing.raise_for_status()
