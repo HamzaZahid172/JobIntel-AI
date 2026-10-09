@@ -107,6 +107,58 @@
   </form>
 </div>
 
+<div id="assistModal" class="modal hidden">
+  <div class="modalCard assistModalCard">
+    <div class="panelHead">
+      <h3>Guided Job Application (Playwright Beta)</h3>
+      <button type="button" id="assistCloseModal" class="iconBtn">✕</button>
+    </div>
+    <p id="assistJobTitle">Employer job</p>
+    <p class="policyNote">Runs in a separate Chromium window on your own Mac. You approve every final submission. Login, CAPTCHA, consent and unfamiliar questions need your input.</p>
+    <div class="assistSteps">
+      <form id="assistStartForm">
+        <div class="assistFields">
+          <label>First name<input name="firstName" required></label>
+          <label>Last name<input name="lastName" required></label>
+          <label>Email<input name="email" type="email" required></label>
+          <label>Phone (optional)<input name="phone" autocomplete="tel"></label>
+          <label>City (optional)<input name="city"></label>
+          <label>Country (optional)<input name="country" value="Germany"></label>
+          <label>LinkedIn (optional)<input name="linkedin" type="url"></label>
+          <label>GitHub (optional)<input name="github" type="url"></label>
+          <label>Portfolio (optional)<input name="portfolio" type="url"></label>
+          <label>CV / Resume <small>(PDF/DOC/DOCX/TXT)</small><input type="file" name="cv" accept=".pdf,.doc,.docx,.txt" required></label>
+          <label>Cover letter (optional)<input type="file" name="cover" accept=".pdf,.doc,.docx,.txt"></label>
+          <label>Experience letter (optional)<input type="file" name="experience" accept=".pdf,.doc,.docx,.txt"></label>
+        </div>
+        <button class="primary" type="submit">1. Open Employer in Chromium</button>
+      </form>
+      <div id="assistWorkspace" class="hidden">
+        <div id="assistReview" class="assistReview">Waiting for browser…</div>
+        <div class="prepActions assistButtons">
+          <button class="secondary" type="button" id="assistInspect">2. Inspect Form</button>
+          <button class="primary" type="button" id="assistFill">3. Fill Known Fields &amp; Attach</button>
+          <button class="secondary" type="button" id="assistNext">Next / Continue</button>
+        </div>
+        <p class="policyNote">Review the visible employer form before submitting. The assistant will not answer work-authorization, salary, demographic or consent questions for you.</p>
+        <div class="assistFinal">
+          <label>Type SUBMIT to approve the employer's final action
+            <input id="assistApproval" placeholder="SUBMIT" autocomplete="off">
+          </label>
+          <button class="primary" type="button" id="assistSubmit">4. Approve Final Submission</button>
+        </div>
+        <button class="secondary" type="button" id="assistTrack">5. I verified employer confirmation — Track application</button>
+        <button class="dangerButton" type="button" id="assistCloseBrowser">Close Browser Session</button>
+      </div>
+      <p id="assistMessage" role="status" class="muted"></p>
+    </div>
+    <details><summary>Local setup (one time)</summary><pre class="codeSample">cd browser-assistant
+npm install
+npx playwright install chromium
+npm start</pre><p>Keep the assistant running on localhost:3401 while JobIntel is open at localhost:3100.</p></details>
+  </div>
+</div>
+
 <div id="tailorModal" class="modal hidden">
   <div class="modalCard tailorModalCard">
     <div class="panelHead"><h3>Evidence-based CV Tailoring</h3><button type="button" id="closeTailorModal" class="iconBtn">✕</button></div>
