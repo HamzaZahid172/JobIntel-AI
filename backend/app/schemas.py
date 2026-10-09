@@ -75,6 +75,7 @@ class CollectorTargetCreate(BaseModel):
 
 class ApplicationPreparationRequest(BaseModel):
     minimum_match: float = Field(70, ge=0, le=100)
+    cv_id: int | None = Field(None, gt=0)
 
 
 class ApplicationPackageAnswerUpdate(BaseModel):
