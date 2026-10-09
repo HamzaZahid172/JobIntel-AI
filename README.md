@@ -18,6 +18,20 @@ Local-first, zero-paid-service career intelligence platform for Germany-focused 
 - Optional free data-engineering profile with Redpanda + ClickHouse
 - Airflow/dbt/ML/Kubernetes/Terraform scaffolds for later data-dependent stages
 
+
+## Job Acquisition P0/P1 (October 2026)
+
+- **Gmail reliability (P0)**: syncs multiple Gmail result pages (up to 300 recent messages); explicitly includes Trash and excludes Spam; checks company and role evidence; refuses ambiguous multi-role matches; protects applications against emails dated before the application. Permanently deleted Gmail messages cannot be recovered.
+- **Opportunity Score (P1)**: a separate explainable priority heuristic combining CV match, freshness, direct-employer sources and role alignment. Shows Apply Now / Review / Skip decisions; hard blockers force Skip.
+- **More job sources (P1)**: Remotive added to Arbeitnow and Jobicy, alongside configurable Greenhouse, Ashby, Lever and SmartRecruiters employer boards. Remotive listings link to and acknowledge Remotive; we do not republish to other boards. Limited Remotive polling (6h minimum) respects its public API guidance.
+- **Action Center (P1)**: best opportunities and recruiter follow-ups in one queue; already-tracked vacancies omitted from suggestions.
+- **CV tailoring (P1)**: preview evidence-based text grounded in an uploaded CV; select from your uploaded CV versions before preparation. Never fabricates skills, and never silently changes or sends your CV.
+- **Follow-up assistant (P1)**: after seven days, drafts a company/role-specific email for manual review and sending. A separate explicit "I sent this" action records the follow-up and suppresses immediate duplicates.
+
+### Safety and control
+
+JobIntel **does not auto-submit job applications or send Gmail messages**. It uses Gmail read-only scope, and cannot send emails with that scope. Review every application, CV suggestion and outreach draft before using it. For Gmail/Remotive integration specifics and API endpoints, see `docs/JOB_ACQUISITION_P0_P1.md`.
+
 ## Run
 
 ```bash
