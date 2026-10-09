@@ -7,7 +7,7 @@ const {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel} = r
 
 const HOST = "127.0.0.1", PORT = Number(process.env.JOBINTEL_ASSISTANT_PORT || 3401);
 const ALLOWED = new Set(["http://localhost:3100", "http://127.0.0.1:3100"]);
-const MAX_BODY_BYTES = 24 * 1024 * 1024;
+const MAX_BODY_BYTES = 29 * 1024 * 1024;
 let session = null;
 
 function json(res, code, payload, origin) {
@@ -132,9 +132,6 @@ async function fill() {
 }
 async function clickNext() {
   if(!session)throw Error("Start an application first.");
-  const currentFields=await visibleFields(session.page);
-  const hasApplicationForm=currentFields.some(x=>x.type==="file"||x.type==="email")||
-    currentFields.filter(x=>x.required).length>=2;
   const buttons=await session.page.locator("button,input[type=submit],a").all();
   let found=null;
   for(const button of buttons){
@@ -142,9 +139,8 @@ async function clickNext() {
       if(!await button.isVisible())continue;
       const text=(await button.innerText().catch(()=>'')) ||
         (await button.getAttribute("value")) || (await button.getAttribute("aria-label")) || "";
-      const initialApply=!hasApplicationForm && /^apply now$/i.test(text.trim());
-      if(submissionLabel(text)&&!initialApply)continue;
-      if(initialApply||nextLabel(text)){found=button;break;}
+      if(submissionLabel(text))continue;
+      if(nextLabel(text)){found=button;break;}
     }catch{}
   }
   if(!found)throw Error("No safe Next/Continue button found. Click the next step manually in Chromium.");
