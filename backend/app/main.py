@@ -897,8 +897,8 @@ def send_followup(
         raise HTTPException(403, "Enable Gmail Send permission in Settings before sending.")
     recipient = payload.recipient.strip()
     if (
-        not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/?^_`{|}~-]+@[A-Za-z0-9-]+(?:\\.[A-Za-z0-9-]+)+", recipient)
-        or "\\n" in recipient or "\\r" in recipient
+        not re.fullmatch(r"[A-Za-z0-9.!#$%&'*+/?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+", recipient)
+        or "\n" in recipient or "\r" in recipient
     ):
         raise HTTPException(400, "Enter one valid verified recruiter email address.")
     local = recipient.split("@", 1)[0].lower().replace("-", "").replace("_", "")
@@ -911,7 +911,7 @@ def send_followup(
     except httpx.HTTPError as exc:
         logger.exception("Gmail send failed for application %s", application_id)
         raise HTTPException(502, "Gmail did not accept the message. Check permissions and retry carefully.") from exc
-    application.notes = ((application.notes or "").rstrip() + f"\\nFollow-up sent: {date.today().isoformat()}").strip()
+    application.notes = ((application.notes or "").rstrip() + f"\nFollow-up sent: {date.today().isoformat()}").strip()
     db.commit()
     return {"sent": True, "message_id": message_id, "application_id": application.id}
 
