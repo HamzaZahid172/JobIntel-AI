@@ -20,6 +20,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .ats_simulator import ats_review as evaluate_cv_ats
 from .application_preparation import build_application_package_payload
 from .job_acquisition import (
     cv_tailoring_draft,
@@ -914,6 +915,28 @@ def send_followup(
     application.notes = ((application.notes or "").rstrip() + f"\nFollow-up sent: {date.today().isoformat()}").strip()
     db.commit()
     return {"sent": True, "message_id": message_id, "application_id": application.id}
+
+
+@app.get("/api/jobs/{job_id}/ats-review")
+def job_ats_review(
+    job_id: int,
+    cv_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    cv = (
+        db.query(CVProfile)
+        .filter(CVProfile.id == cv_id, CVProfile.user_id == user.id)
+        .first()
+        if cv_id is not None else latest_cv(db, user.id)
+    )
+    if not cv:
+        raise HTTPException(400, "Upload or select your CV first.")
+    return {"cv_filename": cv.filename, "job": serialize_job(job),
+            "assessment": evaluate_cv_ats(cv.text, match_details(cv, job))}
 
 
 @app.get("/api/jobs/{job_id}/match-report")
