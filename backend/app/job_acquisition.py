@@ -45,10 +45,10 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
     # Block adjacent non-engineering roles: keyword overlap alone must never
     # recommend Product Management, sales or exclusively manual testing.
     off_target = bool(re.search(
-        r"\\b(product manager|project manager|program manager|scrum master|"
+        r"\b(product manager|project manager|program manager|scrum master|"
         r"technical product owner|sales engineer|sales manager|account manager|"
         r"marketing|recruiter|hr manager|business development|"
-        r"manual tester|manual testing|customer support)\\b", title
+        r"manual tester|manual testing|customer support)\b", title
     ))
     if off_target:
         score_value = min(score_value, 34)
