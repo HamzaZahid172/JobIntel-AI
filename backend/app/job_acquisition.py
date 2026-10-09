@@ -42,6 +42,17 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
 
     title = (getattr(job, "title", "") or "").lower()
     descriptions = (getattr(job, "job_types", "") or "").lower()
+    # Block adjacent non-engineering roles: keyword overlap alone must never
+    # recommend Product Management, sales or exclusively manual testing.
+    off_target = bool(re.search(
+        r"\\b(product manager|project manager|program manager|scrum master|"
+        r"technical product owner|sales engineer|sales manager|account manager|"
+        r"marketing|recruiter|hr manager|business development|"
+        r"manual tester|manual testing|customer support)\\b", title
+    ))
+    if off_target:
+        score_value = min(score_value, 34)
+        decision = "Skip"
     words = title + " " + descriptions
     track = (
         "Internship" if re.search(r"intern(ship)?|praktik(um|ant)", words)
@@ -55,6 +66,8 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
     ]
     if blockers:
         reasons.append("Blockers: " + "; ".join(blockers))
+    if off_target:
+        reasons.append("Role title does not match the candidate's engineering target roles.")
     return {
         "score": score_value,
         "decision": decision,
