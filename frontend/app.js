@@ -1103,11 +1103,11 @@ async function renderSettingsPage(){
         '<h2>Gmail application tracking</h2>' +
         '<p>Connect Gmail with read-only access. JobIntel scans recent messages, matches them to tracked applications, and can update outcomes such as Screening, Interview, Offer or Rejected.</p>' +
         (gmail.connected
-          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button><button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
+          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button>'+(gmail.can_send?'<span class="pill good">Send authorized</span>':'<button id="gmailSendPermissionButton" class="secondary" type="button">Enable Gmail sending</button>')+'<button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
           : (gmail.configured
               ? '<p><span class="pill warn">Not connected</span></p><button id="gmailConnectButton" class="primary" type="button">Connect Gmail</button>'
               : '<p><span class="pill warn">OAuth setup required</span></p><p class="muted">Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_GMAIL_REDIRECT_URI in your .env, then rebuild the backend.</p>')) +
-        '<p class="policyNote">Permission used: Gmail read-only. JobIntel does not send, delete or modify email.</p>' +
+        '<p class="policyNote">'+(gmail.can_send?'Gmail read and send enabled. Sending is never automatic: you review each recipient and message before clicking Send.':'Gmail read-only is active. For sending, add gmail.send to Google Cloud Data Access and click Enable Gmail sending to authorize it separately.')+'</p>' +
       '</div>' +
       '<div class="card detailPage atsTargets">' +
         '<h2>Direct employer ATS collectors</h2>' +
@@ -1145,6 +1145,16 @@ async function renderSettingsPage(){
         const result=await apiFetch('/api/gmail/connect',{method:'POST'});
         window.open(result.authorization_url,'_blank','noopener');
       }catch(err){alert('Gmail connection could not start: '+err.message);}
+    };
+  }
+  if(document.querySelector('#gmailSendPermissionButton')){
+    document.querySelector('#gmailSendPermissionButton').onclick=async function(){
+      if(!confirm('Google will ask for an additional gmail.send permission. Continue?'))return;
+      try{
+        const r=await apiFetch('/api/gmail/enable-send',{method:'POST'});
+        window.open(r.authorization_url,'_blank','noopener');
+        alert('Authorize Gmail Send in the opened Google tab, then refresh Settings.');
+      }catch(err){alert('Gmail Send authorization could not start: '+err.message);}
     };
   }
   if(document.querySelector('#gmailSyncButton')){
