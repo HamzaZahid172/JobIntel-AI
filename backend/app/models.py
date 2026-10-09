@@ -119,3 +119,42 @@ class ApplicationPackage(Base):
     package_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GmailConnection(Base):
+    __tablename__ = "gmail_connections"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    google_email: Mapped[str] = mapped_column(String(255), default="")
+    access_token: Mapped[str] = mapped_column(Text)
+    refresh_token: Mapped[str] = mapped_column(Text, default="")
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scope: Mapped[str] = mapped_column(Text, default="https://www.googleapis.com/auth/gmail.readonly")
+    connected_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class GmailOAuthState(Base):
+    __tablename__ = "gmail_oauth_states"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    state: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GmailEvent(Base):
+    __tablename__ = "gmail_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    application_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    gmail_message_id: Mapped[str] = mapped_column(String(160), index=True)
+    outcome: Mapped[str] = mapped_column(String(40), default="")
+    subject: Mapped[str] = mapped_column(String(500), default="")
+    sender: Mapped[str] = mapped_column(String(500), default="")
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

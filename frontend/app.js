@@ -330,6 +330,7 @@ async function boot(){
     renderNav();
     await routeTo(currentRoute, false);
     updateAssistantStatus();
+    autoSyncGmail();
     if(!assistantStatusTimer){
       assistantStatusTimer = setInterval(updateAssistantStatus, 10000);
     }
@@ -588,13 +589,29 @@ async function renderJobMarket(includeAll){
 }
 
 async function renderApplicationsPage(){
-  const apps = await apiFetch('/api/applications');
+  const results = await Promise.all([
+    apiFetch('/api/applications'),
+    apiFetch('/api/gmail/events?limit=100').catch(function(){return [];})
+  ]);
+  const apps = results[0];
+  const gmailEvents = results[1];
+  const latestEventByApp = {};
+  gmailEvents.forEach(function(event){
+    if(event.application_id && !latestEventByApp[event.application_id]) latestEventByApp[event.application_id]=event;
+  });
   const page = document.querySelector('#pageContent');
-  page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + ' tracked applications</b><small>Update status as employers respond</small></div><button id="pageAddApp" class="primary">＋ Add application</button></div>' +
-    '<div class="card tableCard"><table class="dataTable"><thead><tr><th>Role</th><th>Company</th><th>Applied</th><th>Match</th><th>Status</th><th>Link</th></tr></thead><tbody>' +
-    apps.map(function(a){return '<tr><td><b>'+esc(a.role)+'</b></td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
+  page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + ' tracked applications</b><small>Status can update automatically from matched Gmail replies</small></div><div><button id="syncGmailFromApps" class="secondary">Sync Gmail</button> <button id="pageAddApp" class="primary">＋ Add application</button></div></div>' +
+    '<div class="card tableCard"><table class="dataTable"><thead><tr><th>Role</th><th>Company</th><th>Applied</th><th>Match</th><th>Status</th><th>Gmail signal</th><th>Link</th></tr></thead><tbody>' +
+    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b></td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
     '</tbody></table></div>';
   document.querySelector('#pageAddApp').onclick=function(){openApplicationModal(null);};
+  document.querySelector('#syncGmailFromApps').onclick=async function(){
+    try{
+      const result=await apiFetch('/api/gmail/sync',{method:'POST'});
+      alert('Gmail sync complete: '+result.matched+' matched message(s), '+result.updated+' application status update(s).');
+      await renderApplicationsPage();
+    }catch(err){alert('Gmail sync failed: '+err.message);}
+  };
   document.querySelectorAll('.statusSelect').forEach(function(select){
     select.onchange=async function(){
       await apiFetch('/api/applications/'+select.dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:select.value})});
@@ -752,6 +769,7 @@ async function renderSettingsPage(){
   const sources=await apiFetch('/api/sources');
   const status=await apiFetch('/api/assistant/status');
   const targets=await apiFetch('/api/collector-targets');
+  const gmail=await apiFetch('/api/gmail/status').catch(function(){return {configured:false,connected:false};});
 
   document.querySelector('#pageContent').innerHTML=
     '<div class="detailGrid">' +
@@ -774,6 +792,16 @@ async function renderSettingsPage(){
         '<h3>Planned / restricted</h3>' +
         sources.planned.map(function(s){return '<div class="sourceRow"><b>'+esc(s.name)+'</b><span class="pill warn">'+esc(s.status)+'</span><small>'+esc(s.mode)+'</small></div>';}).join('') +
         '<p class="policyNote">XING and StepStone remain manual/authorized integrations. Direct employer ATS collectors are preferred for automated acquisition.</p>' +
+      '</div>' +
+      '<div class="card detailPage">' +
+        '<h2>Gmail application tracking</h2>' +
+        '<p>Connect Gmail with read-only access. JobIntel scans recent messages, matches them to tracked applications, and can update outcomes such as Screening, Interview, Offer or Rejected.</p>' +
+        (gmail.connected
+          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button><button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
+          : (gmail.configured
+              ? '<p><span class="pill warn">Not connected</span></p><button id="gmailConnectButton" class="primary" type="button">Connect Gmail</button>'
+              : '<p><span class="pill warn">OAuth setup required</span></p><p class="muted">Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_GMAIL_REDIRECT_URI in your .env, then rebuild the backend.</p>')) +
+        '<p class="policyNote">Permission used: Gmail read-only. JobIntel does not send, delete or modify email.</p>' +
       '</div>' +
       '<div class="card detailPage atsTargets">' +
         '<h2>Direct employer ATS collectors</h2>' +
@@ -805,6 +833,31 @@ async function renderSettingsPage(){
 
   document.querySelector('#logoutButton').onclick=logout;
 
+  if(document.querySelector('#gmailConnectButton')){
+    document.querySelector('#gmailConnectButton').onclick=async function(){
+      try{
+        const result=await apiFetch('/api/gmail/connect',{method:'POST'});
+        window.open(result.authorization_url,'_blank','noopener');
+      }catch(err){alert('Gmail connection could not start: '+err.message);}
+    };
+  }
+  if(document.querySelector('#gmailSyncButton')){
+    document.querySelector('#gmailSyncButton').onclick=async function(){
+      try{
+        const result=await apiFetch('/api/gmail/sync',{method:'POST'});
+        alert('Gmail sync complete: '+result.matched+' matched, '+result.updated+' status update(s).');
+        await renderSettingsPage();
+      }catch(err){alert('Gmail sync failed: '+err.message);}
+    };
+  }
+  if(document.querySelector('#gmailDisconnectButton')){
+    document.querySelector('#gmailDisconnectButton').onclick=async function(){
+      if(!confirm('Disconnect Gmail from JobIntel?')) return;
+      await apiFetch('/api/gmail/disconnect',{method:'DELETE'});
+      await renderSettingsPage();
+    };
+  }
+
   document.querySelector('#collectorTargetForm').onsubmit=async function(e){
     e.preventDefault();
     const data=Object.fromEntries(new FormData(e.target).entries());
@@ -831,6 +884,17 @@ async function renderSettingsPage(){
 async function logout(){
   try{await apiFetch('/api/auth/logout',{method:'POST'});}catch{}
   localStorage.removeItem('jobintel_token'); currentUser=null; showAuth('Logged out.');
+}
+
+async function autoSyncGmail(){
+  try{
+    const status=await apiFetch('/api/gmail/status');
+    if(!status.connected) return;
+    const last=Number(localStorage.getItem('jobintel_gmail_autosync')||0);
+    if(Date.now()-last < 15*60*1000) return;
+    await apiFetch('/api/gmail/sync',{method:'POST'});
+    localStorage.setItem('jobintel_gmail_autosync',String(Date.now()));
+  }catch{}
 }
 
 async function updateAssistantStatus(){
