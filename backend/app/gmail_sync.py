@@ -259,7 +259,7 @@ def _gmail_message_query(days: int) -> str:
     return f"in:anywhere -in:spam newer_than:{max(days, 1)}d"
 
 
-def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100) -> dict:
+def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 300) -> dict:
     connection = (
         db.query(GmailConnection)
         .filter(GmailConnection.user_id == user_id)
