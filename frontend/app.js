@@ -455,6 +455,7 @@ function jobCard(job, compact){
       '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
       '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
       '<button class="primary guidedApplyBtn" data-job-id="' + job.id + '">Assisted Apply</button>' +
+      '<button class="secondary atsReviewBtn" data-job-id="' + job.id + '">ATS Review</button>' +
       '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
@@ -480,6 +481,9 @@ function bindTrackButtons(){
     };
   });
 
+  document.querySelectorAll('.atsReviewBtn').forEach(function(button){
+    button.onclick=function(){showAtsReview(button.dataset.jobId);};
+  });
   document.querySelectorAll('.tailorCvBtn').forEach(function(button){
     button.onclick=function(){showTailorCv(button.dataset.jobId);};
   });
@@ -753,49 +757,109 @@ function bindAssistedApply(){
 bindAssistedApply();
 
 async function renderActionCenter(){
-  const action=await apiFetch('/api/action-center');
+  const results=await Promise.all([
+    apiFetch('/api/action-center'),
+    apiFetch('/api/gmail/status').catch(function(){return {connected:false,can_send:false};})
+  ]);
+  const action=results[0],gmail=results[1];
   const page=document.querySelector('#pageContent');
   jobMarketCache=(action.opportunities||[]).map(function(row){return row.job;});
   page.innerHTML='<div class="pageIntro"><h2>Today’s Job Action Queue</h2>' +
-    '<p>Apply to strong matches and review each application before submission. Opportunity scores are priority heuristics, not hiring probabilities.</p></div>' +
+    '<p>Apply to strong engineering matches. Every browser-assisted submission needs your approval.</p></div>' +
     '<div class="analyticsSummary">' +
     '<div class="card analyticsMini"><small>Apply Now</small><b>'+action.apply_now+'</b></div>' +
     '<div class="card analyticsMini"><small>Review</small><b>'+action.review+'</b></div>' +
     '<div class="card analyticsMini"><small>Follow-ups due</small><b>'+action.followups.length+'</b></div></div>' +
-    (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs CV evidence.</p></div>':'') +
+    (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs evidence from your CV.</p></div>':'') +
     '<div class="pageIntro"><h3>Best current opportunities</h3></div>' +
-    '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No eligible opportunities in the current feed. Refresh jobs or expand employer ATS sources.'))+'</div>' +
-    '<div class="pageIntro"><h3>Follow-up assistant</h3><p>These are drafts only. Copy, review and send manually, then mark as sent.</p></div>' +
-    '<div class="followupGrid">'+(action.followups.map(function(f){
-      return '<article class="card followupCard"><h3>'+esc(f.role)+'</h3><p>'+esc(f.company)+' · '+f.days_waiting+' days waiting</p>' +
-        '<label>Subject<input readonly value="'+esc(f.subject)+'"></label>' +
-        '<label>Email draft<textarea readonly rows="8" id="followupDraft'+f.application_id+'">'+esc(f.body)+'</textarea></label>' +
-        '<div class="prepActions"><button class="secondary followupCopy" data-app-id="'+f.application_id+'">Copy email</button>' +
-        '<button class="primary followupSent" data-app-id="'+f.application_id+'">I sent this follow-up</button></div></article>';
+    '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No strong matching openings in the current feed. Refresh jobs or add employer ATS collectors.'))+'</div>' +
+    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>Edit the message and enter a verified recruiter address before sending. Gmail Send requires separate consent.</p></div>' +
+    '<div class="followupGrid">'+(action.followups.map(function(row){
+      return '<article class="card followupCard" data-app-id="'+row.application_id+'">'+
+        '<h3>'+esc(row.role)+'</h3><p>'+esc(row.company)+' · '+row.days_waiting+' days waiting</p>'+
+        '<label>Recruiter email address (enter verified address)<input class="followupTo" type="email" placeholder="recruiter@company.com"></label>'+
+        '<label>Email subject<input class="followupSubject" value="'+esc(row.subject)+'"></label>'+
+        '<label>Editable email draft<textarea class="followupBody" rows="9">'+esc(row.body)+'</textarea></label>'+
+        '<div class="prepActions">'+
+        '<button type="button" class="secondary followupCopy">Copy draft</button>'+
+        (gmail.can_send?'<button type="button" class="primary followupSend">Review & Send via Gmail</button>':
+         '<button type="button" class="secondary followupEnableGmail">Enable Gmail sending</button>')+
+        '<button type="button" class="secondary followupSent">I sent this externally</button></div>'+
+        '<small>'+(gmail.can_send?'Gmail send is authorized; no email is sent without clicking Review & Send.':'Gmail read-only remains available; enable Send separately in Settings.')+'</small>'+
+        '</article>';
     }).join('')||empty('No follow-ups are due right now.'))+'</div>';
   bindTrackButtons();
-  document.querySelectorAll('.followupCopy').forEach(function(btn){
-    btn.onclick=async function(){
-      const row=action.followups.find(function(f){return String(f.application_id)===btn.dataset.appId;});
-      if(!row)return;
-      try{await navigator.clipboard.writeText('Subject: '+row.subject+'\n\n'+row.body);btn.textContent='Copied ✓';}
-      catch(err){alert('Copy unavailable; select the draft text manually.');}
+  document.querySelectorAll('.followupCard').forEach(function(card){
+    const id=Number(card.dataset.appId);
+    const addr=card.querySelector('.followupTo');
+    const subject=card.querySelector('.followupSubject');
+    const body=card.querySelector('.followupBody');
+    card.querySelector('.followupCopy').onclick=async function(){
+      try{await navigator.clipboard.writeText('To: '+addr.value+'\nSubject: '+subject.value+'\n\n'+body.value);
+        this.textContent='Copied ✓';
+      }catch(err){alert('Copy unavailable; select the message text manually.');}
     };
-  });
-  document.querySelectorAll('.followupSent').forEach(function(btn){
-    btn.onclick=async function(){
-      if(!confirm('Confirm that you actually sent this follow-up outside JobIntel?'))return;
+    const enable=card.querySelector('.followupEnableGmail');
+    if(enable)enable.onclick=function(){routeTo('settings');};
+    const send=card.querySelector('.followupSend');
+    if(send)send.onclick=async function(){
+      const recipient=addr.value.trim();
+      if(!recipient || !addr.checkValidity()){alert('Enter one verified recruiter email address first.');return;}
+      if(!subject.value.trim()||!body.value.trim()){alert('Review subject and message first.');return;}
+      if(!confirm('Send this exact message from your connected Gmail account to '+recipient+'?'))return;
+      send.disabled=true;
       try{
-        await apiFetch('/api/applications/'+btn.dataset.appId+'/follow-up-sent',{method:'POST'});
+        await apiFetch('/api/applications/'+id+'/send-follow-up',{method:'POST',
+          headers:{'Content-Type':'application/json'},body:JSON.stringify({
+            recipient,subject:subject.value.trim(),body:body.value.trim()
+          })});
+        alert('Gmail accepted the message. You can verify it in your Sent folder.');
+        await renderActionCenter();
+      }catch(err){alert('Gmail send did not complete: '+err.message);send.disabled=false;}
+    };
+    card.querySelector('.followupSent').onclick=async function(){
+      if(!confirm('Confirm you already sent this follow-up outside JobIntel?'))return;
+      try{await apiFetch('/api/applications/'+id+'/follow-up-sent',{method:'POST'});
         await renderActionCenter();
       }catch(err){alert('Could not record follow-up: '+err.message);}
     };
   });
 }
 
+async function showAtsReview(jobId){
+  const modal=document.querySelector('#tailorModal');
+  const versionSelect=document.querySelector('#tailorVersion');
+  const output=document.querySelector('#tailorDraft');
+  modal.classList.remove('hidden');
+  modal.querySelector('h3').textContent='Job-specific ATS Simulation';
+  output.value='Evaluating CV against job requirements...';
+  document.querySelector('#prepareWithSelectedCv').classList.add('hidden');
+  try{
+    const cvs=await apiFetch('/api/cv/versions');
+    if(!cvs.length)throw new Error('Upload a CV first.');
+    versionSelect.innerHTML=cvs.map(function(cv){return '<option value="'+cv.id+'">'+esc(cv.filename)+'</option>';}).join('');
+    async function read(){
+      const payload=await apiFetch('/api/jobs/'+jobId+'/ats-review?cv_id='+versionSelect.value);
+      const a=payload.assessment;
+      output.value=a.label+'\n\nCurrent CV: '+payload.cv_filename+
+        '\nJob-specific match: '+a.job_match_score+'%'+
+        '\nGeneric CV ATS readiness: '+a.ats_readiness+'/100'+
+        '\nRequired skill coverage: '+(a.required_skill_coverage===null?'Not measured':a.required_skill_coverage+'%')+
+        '\n\nSkills supported by CV: '+(a.required_skills_found||[]).join(', ')+
+        '\nMissing evidence (do not fabricate): '+(a.required_skills_missing||[]).join(', ')+
+        '\nBlockers: '+(a.hard_blockers||[]).join('; ')+
+        '\n\nReadability checks: '+JSON.stringify(a.cv_parse_checks,null,2)+
+        '\n\nRecommendations:\n'+(a.suggestions||[]).map(function(x){return '• '+x;}).join('\n')+
+        '\n\nThis is a LOCAL simulator, not approval by an employer ATS.';
+    }
+    versionSelect.onchange=read;await read();
+  }catch(err){output.value=err.message;}
+}
 
 async function showTailorCv(jobId){
   const modal=document.querySelector('#tailorModal');
+  modal.querySelector('h3').textContent='Evidence-based CV Tailoring';
+  document.querySelector('#prepareWithSelectedCv').classList.remove('hidden');
   const versionSelect=document.querySelector('#tailorVersion');
   const prepButton=document.querySelector('#prepareWithSelectedCv');
   prepButton.onclick=async function(){
