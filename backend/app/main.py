@@ -1129,9 +1129,14 @@ async def prepare_application(
     if not job:
         raise HTTPException(404, "Job not found.")
 
-    cv = latest_cv(db, user.id)
+    cv = (
+        db.query(CVProfile)
+        .filter(CVProfile.id == payload.cv_id, CVProfile.user_id == user.id)
+        .first()
+        if payload.cv_id is not None else latest_cv(db, user.id)
+    )
     if not cv:
-        raise HTTPException(400, "Upload your CV before preparing an application.")
+        raise HTTPException(400, "Upload or select one of your own CV versions before preparation.")
 
     report = match_details(cv, job)
     letter_text, generator_mode = await generate_cover_letter_text(
