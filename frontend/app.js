@@ -14,6 +14,7 @@ const navItems = [
 let currentUser = null;
 let currentRoute = 'dashboard';
 let jobMarketCache = [];
+let showRejectedApplications = false;
 let assistantStatusTimer = null;
 
 function renderNav(){
@@ -590,7 +591,7 @@ async function renderJobMarket(includeAll){
 
 async function renderApplicationsPage(){
   const results = await Promise.all([
-    apiFetch('/api/applications'),
+    apiFetch('/api/applications'+(showRejectedApplications?'':'?active_only=true')),
     apiFetch('/api/gmail/events?limit=100').catch(function(){return [];})
   ]);
   const apps = results[0];
@@ -600,11 +601,15 @@ async function renderApplicationsPage(){
     if(event.application_id && !latestEventByApp[event.application_id]) latestEventByApp[event.application_id]=event;
   });
   const page = document.querySelector('#pageContent');
-  page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + ' tracked applications</b><small>Status can update automatically from matched Gmail replies</small></div><div><button id="syncGmailFromApps" class="secondary">Sync Gmail</button> <button id="pageAddApp" class="primary">＋ Add application</button></div></div>' +
+  page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + (showRejectedApplications?' tracked applications':' active applications') + '</b><small>Rejected applications are hidden from the active list but kept for analytics.</small></div><div><button id="toggleRejectedApps" class="secondary">'+(showRejectedApplications?'Hide rejected':'Show rejected')+'</button> <button id="syncGmailFromApps" class="secondary">Sync Gmail</button> <button id="pageAddApp" class="primary">＋ Add application</button></div></div>' +
     '<div class="card tableCard"><table class="dataTable"><thead><tr><th>Role</th><th>Company</th><th>Applied</th><th>Match</th><th>Status</th><th>Gmail signal</th><th>Link</th></tr></thead><tbody>' +
     apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b></td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
     '</tbody></table></div>';
   document.querySelector('#pageAddApp').onclick=function(){openApplicationModal(null);};
+  document.querySelector('#toggleRejectedApps').onclick=async function(){
+    showRejectedApplications=!showRejectedApplications;
+    await renderApplicationsPage();
+  };
   document.querySelector('#syncGmailFromApps').onclick=async function(){
     try{
       const result=await apiFetch('/api/gmail/sync',{method:'POST'});
