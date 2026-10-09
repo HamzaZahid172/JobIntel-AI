@@ -58,6 +58,7 @@
 
     <div id="dashboardContent">
       <section id="metrics" class="metrics"></section>
+      <section id="actionCenterQuick" class="card panel actionQuick">Loading the application action queue…</section>
       <section class="grid3">
         <div id="matches" class="card panel"></div>
         <div id="skills" class="card panel"></div>
@@ -104,6 +105,16 @@
     <label>Notes<input name="notes"></label>
     <button class="primary" type="submit">Save application</button>
   </form>
+</div>
+
+<div id="tailorModal" class="modal hidden">
+  <div class="modalCard tailorModalCard">
+    <div class="panelHead"><h3>Evidence-based CV Tailoring</h3><button type="button" id="closeTailorModal" class="iconBtn">✕</button></div>
+    <p>Choose one of your uploaded CVs. This creates a truthful draft for your review; it does not rewrite or submit your CV automatically.</p>
+    <label>CV version<select id="tailorVersion"></select></label>
+    <label>Suggestions and original CV evidence<textarea id="tailorDraft" rows="14" readonly></textarea></label>
+    <button type="button" id="copyTailorDraft" class="primary">Copy suggestions</button>
+  </div>
 </div>
 
 <div id="importModal" class="modal hidden">
