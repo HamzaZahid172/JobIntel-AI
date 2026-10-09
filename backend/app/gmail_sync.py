@@ -138,40 +138,53 @@ def _tokens(value: str) -> set[str]:
 
 
 def classify_message(subject: str, snippet: str) -> str | None:
-    text = f"{subject} {snippet}".lower()
-
-    offer_terms = (
-        "job offer", "offer letter", "we are pleased to offer", "employment offer",
+    """Conservative classification: generic words never trigger a rejection."""
+    value = f"{subject} {snippet}".lower()
+    rejection = (
+        "regret to inform", "not moving forward", "not proceed with your",
+        "other candidates", "other applicants", "application was unsuccessful",
+        "will not be moving", "we have decided not to",
+        "not selected", "unable to offer you", "won't be proceeding",
+        "will not proceed", "nicht berücksichtigen", "leider absagen",
+        "leider nicht", "absage ihrer bewerbung", "bewerbung leider",
     )
-    rejection_terms = (
-        "unfortunately", "regret to inform", "not moving forward", "not proceed",
-        "other candidates", "application was unsuccessful", "will not be moving",
-        "we have decided not to", "not selected",
+    offers = ("job offer", "offer letter", "pleased to offer you", "employment offer")
+    interviews = (
+        "invite you to an interview", "invitation to interview",
+        "would like to interview you", "schedule an interview",
+        "schedule a call with you", "interview invitation",
+        "einladung zum vorstellungsgespräch",
     )
-    interview_terms = (
-        "interview", "schedule a call", "schedule a meeting", "phone screen",
-        "technical interview", "hiring manager call", "meet the team",
+    screening = (
+        "complete the assessment", "coding challenge invitation",
+        "please complete the test", "take-home assignment",
+        "invitation to assessment",
     )
-    screening_terms = (
-        "assessment", "coding challenge", "take-home", "take home",
-        "screening call", "screening interview", "online test",
-    )
-    applied_terms = (
+    applied = (
         "application received", "thank you for applying", "thanks for applying",
         "we received your application", "application confirmation",
+        "eingangsbestätigung ihrer bewerbung",
     )
-
-    if any(term in text for term in offer_terms):
-        return "Offer"
-    if any(term in text for term in rejection_terms):
+    if any(phrase in value for phrase in rejection):
         return "Rejected"
-    if any(term in text for term in interview_terms):
+    if any(phrase in value for phrase in offers):
+        return "Offer"
+    if any(phrase in value for phrase in interviews):
         return "Interview"
-    if any(term in text for term in screening_terms):
+    if any(phrase in value for phrase in screening):
         return "Screening"
-    if any(term in text for term in applied_terms):
+    if any(phrase in value for phrase in applied):
         return "Applied"
     return None
+
+
+def _app_company_match(app: Application, text: str, tokens: set[str]) -> bool:
+    company = _normalise(app.company)
+    company_tokens = _tokens(app.company)
+    return bool(
+        company and company in text
+        or company_tokens and len(company_tokens & tokens) >= len(company_tokens)
+    )
 
 
 def match_application(
@@ -180,39 +193,31 @@ def match_application(
     sender: str,
     snippet: str,
 ) -> Application | None:
-    haystack = _normalise(f"{subject} {sender} {snippet}")
-    haystack_tokens = _tokens(haystack)
-    best = None
-    best_score = 0
+    """Require company evidence and a unique role; never guess between roles."""
+    text = _normalise(f"{subject} {sender} {snippet}")
+    tokens = _tokens(text)
+    candidates = [app for app in applications if _app_company_match(app, text, tokens)]
+    if not candidates:
+        return None
 
-    for app in applications:
-        company = _normalise(app.company)
+    strong = []
+    for app in candidates:
         role = _normalise(app.role)
-        company_tokens = _tokens(company)
-        role_tokens = _tokens(role)
+        role_tokens = _tokens(app.role)
+        if role and role in text or role_tokens and len(role_tokens & tokens) >= 2:
+            strong.append(app)
+    if len(strong) == 1:
+        return strong[0]
+    if len(strong) > 1:
+        return None  # ambiguous: manual review is safer than a wrong rejection
 
-        score = 0
-        if company and company in haystack:
-            score += 5
-        elif company_tokens:
-            overlap = len(company_tokens & haystack_tokens)
-            if overlap >= min(2, len(company_tokens)):
-                score += 3
-
-        if role and role in haystack:
-            score += 4
-        else:
-            role_overlap = len(role_tokens & haystack_tokens)
-            if role_overlap >= 2:
-                score += 2
-            elif role_overlap == 1 and len(role_tokens) == 1:
-                score += 1
-
-        if score > best_score:
-            best = app
-            best_score = score
-
-    return best if best_score >= 3 else None
+    # Employer emails often omit the title, but a *single* application at this
+    # employer is safe when the message clearly relates to a job application.
+    application_context = any(word in text for word in (
+        "application", "applied", "bewerbung", "position", "role", "vacancy",
+        "candidate", "hiring", "interview",
+    ))
+    return candidates[0] if len(candidates) == 1 and application_context else None
 
 
 def _gmail_headers(message: dict) -> dict:
@@ -278,29 +283,51 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100
         return {"scanned": 0, "matched": 0, "updated": 0, "events": 0, "outcomes": {}}
 
     gmail_query = _gmail_message_query(days)
-    listing = httpx.get(
-        f"{GMAIL_API}/users/me/messages",
-        headers=headers,
-        params={"q": gmail_query, "maxResults": min(max(max_results, 1), 250)},
-        timeout=20,
-    )
-    if listing.status_code == 401 and connection.refresh_token:
-        _refresh_access_token(connection)
-        db.commit()
-        headers["Authorization"] = f"Bearer {connection.access_token}"
+    message_ids: list[str] = []
+    seen_ids: set[str] = set()
+    page_token = None
+    max_results = min(max(int(max_results), 1), 500)
+    # Follow nextPageToken; Gmail can return fewer messages than requested.
+    while len(message_ids) < max_results:
+        params = {
+            "q": gmail_query,
+            "maxResults": min(100, max_results - len(message_ids)),
+            "includeSpamTrash": True,
+        }
+        if page_token:
+            params["pageToken"] = page_token
         listing = httpx.get(
             f"{GMAIL_API}/users/me/messages",
             headers=headers,
-            params={"q": gmail_query, "maxResults": min(max(max_results, 1), 250)},
+            params=params,
             timeout=20,
         )
-    listing.raise_for_status()
+        if listing.status_code == 401 and connection.refresh_token:
+            _refresh_access_token(connection)
+            db.commit()
+            headers["Authorization"] = f"Bearer {connection.access_token}"
+            listing = httpx.get(
+                f"{GMAIL_API}/users/me/messages",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+        listing.raise_for_status()
+        listing_data = listing.json()
+        for item in listing_data.get("messages", []):
+            message_id = item.get("id")
+            if message_id and message_id not in seen_ids:
+                seen_ids.add(message_id)
+                message_ids.append(message_id)
+        next_page = listing_data.get("nextPageToken")
+        if not next_page or next_page == page_token or not listing_data.get("messages"):
+            break
+        page_token = next_page
 
     scanned = matched = updated = events_created = 0
     outcomes: dict[str, int] = {}
 
-    for summary in listing.json().get("messages", []):
-        message_id = summary.get("id")
+    for message_id in message_ids:
         if not message_id:
             continue
         if (
@@ -340,11 +367,6 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100
         if not app:
             continue
 
-        matched += 1
-        changed = _apply_outcome(app, outcome)
-        if changed:
-            updated += 1
-
         received_at = None
         internal_date = message.get("internalDate")
         if internal_date:
@@ -352,6 +374,13 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100
                 received_at = datetime.fromtimestamp(int(internal_date) / 1000)
             except (TypeError, ValueError):
                 received_at = None
+
+        if received_at and app.applied_date and received_at.date() < app.applied_date:
+            continue  # an older message cannot change a newer application's status
+        matched += 1
+        changed = _apply_outcome(app, outcome)
+        if changed:
+            updated += 1
 
         db.add(
             GmailEvent(
@@ -377,6 +406,7 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 100
 
     return {
         "scanned": scanned,
+        "listed": len(message_ids),
         "matched": matched,
         "updated": updated,
         "events": events_created,
