@@ -75,3 +75,12 @@
 .conversionDiagnosis{margin:10px 0 14px;padding:10px 12px;border-radius:12px;background:#f8fafc}
 .conversionDiagnosis p{margin:6px 0;font-size:12px;line-height:1.45;color:#334155}
 @media (max-width:720px){.conversionStats{grid-template-columns:1fr}}
+
+.actionQuick{margin:0 0 18px;padding:16px 20px}
+.actionQuick p{margin:6px 0;color:#243c5a}.actionQuick small{color:#60728a}
+.opportunityLine{font-size:12px;color:#26476a;margin:8px 0 4px}
+.followupGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin:12px 0 24px}
+.followupCard{padding:18px}.followupCard label{display:block;margin:10px 0;font-size:12px;font-weight:600}
+.followupCard input,.followupCard textarea,.tailorModalCard textarea,.tailorModalCard select{display:block;width:100%;box-sizing:border-box;margin-top:6px;border:1px solid #dae4ef;padding:10px;border-radius:9px;font:inherit}
+.followupCard textarea,.tailorModalCard textarea{white-space:pre-wrap;line-height:1.4}
+.tailorModalCard{max-width:780px;max-height:88vh;overflow:auto}

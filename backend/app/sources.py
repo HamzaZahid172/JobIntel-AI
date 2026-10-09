@@ -13,7 +13,11 @@ logger = logging.getLogger("jobintel.sources")
 
 ARBEITNOW_URL = "https://www.arbeitnow.com/api/job-board-api"
 JOBICY_URL = "https://jobicy.com/api/v2/remote-jobs"
+REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
+FEED_SOURCES = ("Arbeitnow", "Jobicy", "Remotive")
 MIN_SYNC_INTERVAL = timedelta(hours=1)
+# Respect Remotive's public API guidance; refresh this source no more than every 6 h.
+REMOTIVE_MIN_SYNC_INTERVAL = timedelta(hours=6)
 
 GERMAN_LOCATIONS = (
     "germany", "berlin", "munich", "münchen", "hamburg", "frankfurt", "cologne",
@@ -132,32 +136,87 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
     return jobs
 
 
+def remotive_germany_eligible(location: str) -> bool:
+    """Accept German, EU/EMEA, or genuinely worldwide remote openings."""
+    value = (location or "").lower().strip()
+    return any(term in value for term in (
+        "germany", "deutschland", "europe", "european union",
+        "emea", "eu only", "worldwide", "anywhere", "global",
+    ))
+
+
+def fetch_remotive(client: httpx.Client, limit: int = 100) -> list[dict]:
+    """Public Remotive API; keep attribution and link directly to Remotive."""
+    response = client.get(REMOTIVE_URL, params={"limit": limit})
+    response.raise_for_status()
+    rows = response.json().get("jobs", [])
+    jobs = []
+    for item in rows:
+        title = item.get("title") or ""
+        location = item.get("candidate_required_location") or ""
+        description = strip_html(item.get("description"))
+        if not remotive_germany_eligible(location) or not relevant_role(title, description):
+            continue
+        url = item.get("url") or ""
+        if not url.startswith("https://remotive.com/"):
+            continue
+        jobs.append({
+            "source": "Remotive",
+            "source_id": str(item.get("id") or url),
+            "title": title,
+            "company": item.get("company_name") or "Unknown",
+            "location": location,
+            "remote": True,
+            "url": url,
+            "description": description,
+            "skills": extract_skills(title + " " + description),
+            "job_types": listish(item.get("job_type")),
+            "posted_at": parse_timestamp(item.get("publication_date")),
+        })
+    return jobs
+
+
 def sync_current_jobs(db: Session, force: bool = False) -> dict:
-    last_job = db.query(LiveJob).filter(LiveJob.source.in_(["Arbeitnow", "Jobicy"])).order_by(LiveJob.fetched_at.desc()).first()
-    if not force and last_job and datetime.utcnow() - last_job.fetched_at < MIN_SYNC_INTERVAL:
+    now = datetime.utcnow()
+    latest_general = (
+        db.query(LiveJob).filter(LiveJob.source.in_(("Arbeitnow", "Jobicy")))
+        .order_by(LiveJob.fetched_at.desc()).first()
+    )
+    if (
+        not force and latest_general
+        and now - latest_general.fetched_at < MIN_SYNC_INTERVAL
+    ):
         return {
-            "stored": db.query(LiveJob).count(),
-            "fetched": 0,
-            "errors": [],
-            "sources": ["Arbeitnow", "Jobicy"],
-            "cached": True,
-            "next_refresh_after": (last_job.fetched_at + MIN_SYNC_INTERVAL).isoformat(),
+            "stored": db.query(LiveJob).count(), "fetched": 0,
+            "errors": [], "sources": list(FEED_SOURCES), "cached": True,
+            "next_refresh_after": (latest_general.fetched_at + MIN_SYNC_INTERVAL).isoformat(),
         }
 
-    fetched: list[dict] = []
+    latest_remotive = (
+        db.query(LiveJob).filter(LiveJob.source == "Remotive")
+        .order_by(LiveJob.fetched_at.desc()).first()
+    )
+    remotive_due = not latest_remotive or now - latest_remotive.fetched_at >= REMOTIVE_MIN_SYNC_INTERVAL
+    loaders = [("Arbeitnow", fetch_arbeitnow), ("Jobicy", fetch_jobicy)]
+    if remotive_due:
+        loaders.append(("Remotive", fetch_remotive))
+
+    results: dict[str, list[dict]] = {}
     errors: list[str] = []
-    with httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": "JobIntelAI/0.4"}) as client:
-        for name, loader in (("Arbeitnow", fetch_arbeitnow), ("Jobicy", fetch_jobicy)):
+    with httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": "JobIntelAI/1.0"}) as client:
+        for name, loader in loaders:
             try:
-                fetched.extend(loader(client))
+                results[name] = loader(client)
             except Exception as exc:
                 logger.exception("%s sync failed", name)
                 errors.append(f"{name}: {type(exc).__name__}")
 
-    deduped = {(item["source"], item["source_id"]): item for item in fetched}
-    if deduped:
-        db.query(LiveJob).filter(LiveJob.source.in_(["Arbeitnow", "Jobicy"])).delete(synchronize_session=False)
-        now = datetime.utcnow()
+    # Update successful sources independently; retain the last known listings
+    # from any source whose API temporarily failed.
+    fetched = 0
+    for name, rows in results.items():
+        deduped = {(item["source"], item["source_id"]): item for item in rows}
+        db.query(LiveJob).filter(LiveJob.source == name).delete(synchronize_session=False)
         for item in deduped.values():
             db.add(LiveJob(
                 source=item["source"],
@@ -174,14 +233,17 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
                 posted_at=item["posted_at"],
                 fetched_at=now,
             ))
+        fetched += len(rows)
+    if results:
         db.commit()
 
     return {
         "stored": db.query(LiveJob).count(),
-        "fetched": len(fetched),
+        "fetched": fetched,
         "errors": errors,
-        "sources": ["Arbeitnow", "Jobicy"],
+        "sources": list(FEED_SOURCES),
         "cached": False,
+        "remotive_cached": not remotive_due,
     }
 
 

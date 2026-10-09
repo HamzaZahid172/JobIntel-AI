@@ -3,6 +3,7 @@ const API = localStorage.getItem('jobintel_api') || 'http://localhost:8100';
 const navItems = [
   {route:'dashboard', label:'⌂ Dashboard'},
   {route:'job-market', label:'▣ Job Market'},
+  {route:'action-center', label:'★ Action Center'},
   {route:'applications', label:'▤ My Applications'},
   {route:'ats', label:'▤ ATS CV Check'},
   {route:'matches', label:'♡ Matches'},
@@ -97,6 +98,17 @@ async function load() {
       <div class="metricIcon">${m[0]}</div>
       <div><small>${m[1]}</small><b>${m[2]}</b><span>${esc(m[3])}</span></div>
     </div>`).join('');
+
+  try {
+    const action=await apiFetch('/api/action-center');
+    document.querySelector('#actionCenterQuick').innerHTML=
+      '<div class="panelHead"><h3>★ Job Action Center</h3><button id="openActionCenter" class="primary">Open Action Queue</button></div>'+
+      '<p><b>'+action.apply_now+'</b> jobs to apply · <b>'+action.review+'</b> to review · <b>'+action.followups.length+'</b> follow-ups due</p>'+
+      '<small>Includes opportunity ranking, CV-tailoring suggestions and follow-up drafts. All applications require your approval.</small>';
+    document.querySelector('#openActionCenter').onclick=function(){routeTo('action-center');};
+  }catch(err){
+    document.querySelector('#actionCenterQuick').textContent='Action Center is temporarily unavailable.';
+  }
 
   const matchesHtml = d.matches.length ? d.matches.map(m => {
     const score = m.match == null ? '<span class="noScore">Upload CV<br>to score</span>' : ring(Math.round(m.match),'Match');
@@ -248,6 +260,7 @@ async function refreshJobs() {
     alert(`Stored ${result.stored} current jobs. Employer ATS added/refreshed ${atsCount} jobs.${errorText}`);
     if(currentRoute === 'dashboard') await load();
     if(currentRoute === 'job-market') await renderJobMarket(false);
+    if(currentRoute === 'action-center') await renderActionCenter();
   } catch (err) {
     alert(`Job refresh failed: ${err.message}`);
   } finally {
@@ -276,6 +289,11 @@ async function ask() {
   msgs.scrollTop = msgs.scrollHeight;
 }
 
+document.querySelector('#closeTailorModal').onclick=function(){document.querySelector('#tailorModal').classList.add('hidden');};
+document.querySelector('#copyTailorDraft').onclick=async function(){
+  try{await navigator.clipboard.writeText(document.querySelector('#tailorDraft').value);this.textContent='Copied ✓';}
+  catch(err){alert('Copy unavailable; select the text manually.');}
+};
 document.querySelector('#refreshJobs').onclick = refreshJobs;
 document.querySelector('#sendChat').onclick = ask;
 document.querySelector('#chatInput').onkeydown = e => { if (e.key === 'Enter') ask(); };
@@ -384,6 +402,7 @@ async function routeTo(route, updateHash=true){
   const titles = {
     dashboard:['JobIntel AI','🇩🇪 Live Career Intelligence for Germany'],
     'job-market':['Job Market','All current jobs relevant to your CV'],
+    'action-center':['Action Center','Apply now, CV tailoring and recruiter follow-ups'],
     applications:['My Applications','Track every application and outcome'],
     ats:['ATS CV Check','CV readiness, skills and role profile'],
     matches:['Best Matches','Current jobs ranked against your CV'],
@@ -404,6 +423,7 @@ async function routeTo(route, updateHash=true){
   page.innerHTML = '<div class="pageLoading">Loading…</div>';
 
   if(route==='job-market') return renderJobMarket(false);
+  if(route==='action-center') return renderActionCenter();
   if(route==='applications') return renderApplicationsPage();
   if(route==='ats') return renderAtsPage();
   if(route==='matches') return renderMatchesPage();
@@ -426,12 +446,14 @@ function jobCard(job, compact){
     '<h3>' + esc(job.title) + '</h3><p>' + esc(job.company) + ' · ' + esc(job.location) + '</p></div>' +
     '<div class="scoreBadge">' + score + '<small>match</small></div></div>' +
     '<div class="tagRow">' + skills.map(function(s){return '<span class="tag">' + esc(s) + '</span>';}).join('') + '</div>' +
+    (job.opportunity ? '<p class="opportunityLine"><b>Opportunity '+Math.round(job.opportunity.score)+'/100</b> · '+esc(job.opportunity.decision)+' · '+esc(job.opportunity.track)+(job.opportunity.age_days!=null?' · '+job.opportunity.age_days+'d old':'')+'</p>' : '') +
     breakdownHtml +
     (!compact && missing.length ? '<p class="missingLine"><b>Missing:</b> ' + missing.map(esc).join(', ') + '</p>' : '') +
     (!compact && job.hard_blockers && job.hard_blockers.length ? '<p class="blockerLine"><b>Review:</b> ' + job.hard_blockers.map(esc).join(' ') + '</p>' : '') +
     '<div class="jobActions">' +
       (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
       '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
+      '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
       '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
@@ -451,6 +473,9 @@ function bindTrackButtons(){
     };
   });
 
+  document.querySelectorAll('.tailorCvBtn').forEach(function(button){
+    button.onclick=function(){showTailorCv(button.dataset.jobId);};
+  });
   document.querySelectorAll('.prepareApplicationBtn').forEach(function(button){
     button.onclick = function(){
       prepareApplication(button.dataset.jobId, button);
@@ -499,7 +524,7 @@ async function downloadCoverLetter(jobId, button){
   }
 }
 
-async function prepareApplication(jobId, button){
+async function prepareApplication(jobId, button, cvId=null){
   const originalText = button.textContent;
   button.disabled = true;
   button.textContent = 'Preparing…';
@@ -507,7 +532,7 @@ async function prepareApplication(jobId, button){
     const prepared = await apiFetch('/api/jobs/' + jobId + '/prepare-application', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({minimum_match:70})
+      body:JSON.stringify({minimum_match:70,cv_id:cvId})
     });
     button.textContent = prepared.status === 'Package Ready' ? 'Package ready ✓' : 'Needs review ✓';
     setTimeout(function(){ button.textContent = originalText; }, 1600);
@@ -589,6 +614,80 @@ async function renderJobMarket(includeAll){
   draw();
 }
 
+async function renderActionCenter(){
+  const action=await apiFetch('/api/action-center');
+  const page=document.querySelector('#pageContent');
+  jobMarketCache=(action.opportunities||[]).map(function(row){return row.job;});
+  page.innerHTML='<div class="pageIntro"><h2>Today’s Job Action Queue</h2>' +
+    '<p>Apply to strong matches and review each application before submission. Opportunity scores are priority heuristics, not hiring probabilities.</p></div>' +
+    '<div class="analyticsSummary">' +
+    '<div class="card analyticsMini"><small>Apply Now</small><b>'+action.apply_now+'</b></div>' +
+    '<div class="card analyticsMini"><small>Review</small><b>'+action.review+'</b></div>' +
+    '<div class="card analyticsMini"><small>Follow-ups due</small><b>'+action.followups.length+'</b></div></div>' +
+    (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs CV evidence.</p></div>':'') +
+    '<div class="pageIntro"><h3>Best current opportunities</h3></div>' +
+    '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No eligible opportunities in the current feed. Refresh jobs or expand employer ATS sources.'))+'</div>' +
+    '<div class="pageIntro"><h3>Follow-up assistant</h3><p>These are drafts only. Copy, review and send manually, then mark as sent.</p></div>' +
+    '<div class="followupGrid">'+(action.followups.map(function(f){
+      return '<article class="card followupCard"><h3>'+esc(f.role)+'</h3><p>'+esc(f.company)+' · '+f.days_waiting+' days waiting</p>' +
+        '<label>Subject<input readonly value="'+esc(f.subject)+'"></label>' +
+        '<label>Email draft<textarea readonly rows="8" id="followupDraft'+f.application_id+'">'+esc(f.body)+'</textarea></label>' +
+        '<div class="prepActions"><button class="secondary followupCopy" data-app-id="'+f.application_id+'">Copy email</button>' +
+        '<button class="primary followupSent" data-app-id="'+f.application_id+'">I sent this follow-up</button></div></article>';
+    }).join('')||empty('No follow-ups are due right now.'))+'</div>';
+  bindTrackButtons();
+  document.querySelectorAll('.followupCopy').forEach(function(btn){
+    btn.onclick=async function(){
+      const row=action.followups.find(function(f){return String(f.application_id)===btn.dataset.appId;});
+      if(!row)return;
+      try{await navigator.clipboard.writeText('Subject: '+row.subject+'\n\n'+row.body);btn.textContent='Copied ✓';}
+      catch(err){alert('Copy unavailable; select the draft text manually.');}
+    };
+  });
+  document.querySelectorAll('.followupSent').forEach(function(btn){
+    btn.onclick=async function(){
+      if(!confirm('Confirm that you actually sent this follow-up outside JobIntel?'))return;
+      try{
+        await apiFetch('/api/applications/'+btn.dataset.appId+'/follow-up-sent',{method:'POST'});
+        await renderActionCenter();
+      }catch(err){alert('Could not record follow-up: '+err.message);}
+    };
+  });
+}
+
+
+async function showTailorCv(jobId){
+  const modal=document.querySelector('#tailorModal');
+  const versionSelect=document.querySelector('#tailorVersion');
+  const prepButton=document.querySelector('#prepareWithSelectedCv');
+  prepButton.onclick=async function(){
+    await prepareApplication(jobId,prepButton,Number(versionSelect.value));
+    modal.classList.add('hidden');
+  };
+  const draftArea=document.querySelector('#tailorDraft');
+  modal.classList.remove('hidden');
+  draftArea.value='Loading CV evidence…';
+  try{
+    const versions=await apiFetch('/api/cv/versions');
+    if(!versions.length)throw new Error('Upload a CV first.');
+    versionSelect.innerHTML=versions.map(function(v){
+      return '<option value="'+v.id+'">'+esc(v.filename)+' · '+Math.round(v.ats_score)+' ATS readiness</option>';
+    }).join('');
+    async function refresh(){
+      const data=await apiFetch('/api/jobs/'+jobId+'/tailor-cv?cv_id='+versionSelect.value);
+      const d=data.draft;
+      draftArea.value='SUGGESTED PROFILE SUMMARY\n'+d.suggested_summary+
+        '\n\nORIGINAL CV EVIDENCE (review before using)\n'+(d.cv_evidence||[]).map(function(x){return '• '+x;}).join('\n')+
+        '\n\nMATCHED REQUIREMENTS\n'+(d.matched_skills||[]).join(', ')+
+        '\n\nMISSING - DO NOT CLAIM\n'+(d.missing_skills_do_not_claim||[]).join(', ')+
+        '\n\n'+d.instructions;
+    }
+    versionSelect.onchange=refresh;
+    await refresh();
+  }catch(err){draftArea.value='CV tailoring could not load: '+err.message;}
+}
+
+
 async function renderApplicationsPage(){
   const results = await Promise.all([
     apiFetch('/api/applications'+(showRejectedApplications?'':'?active_only=true')),
@@ -613,7 +712,7 @@ async function renderApplicationsPage(){
   document.querySelector('#syncGmailFromApps').onclick=async function(){
     try{
       const result=await apiFetch('/api/gmail/sync',{method:'POST'});
-      alert('Gmail sync complete: '+result.matched+' matched message(s), '+result.updated+' application status update(s).');
+      alert('Gmail sync: '+(result.listed||result.scanned)+' listed, '+result.matched+' matched, '+result.updated+' updated.');
       await renderApplicationsPage();
     }catch(err){alert('Gmail sync failed: '+err.message);}
   };
