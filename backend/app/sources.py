@@ -13,7 +13,10 @@ logger = logging.getLogger("jobintel.sources")
 
 ARBEITNOW_URL = "https://www.arbeitnow.com/api/job-board-api"
 JOBICY_URL = "https://jobicy.com/api/v2/remote-jobs"
-MIN_SYNC_INTERVAL = timedelta(hours=1)
+REMOTIVE_URL = "https://remotive.com/api/remote-jobs"
+FEED_SOURCES = ("Arbeitnow", "Jobicy", "Remotive")
+# Remotive's public API advises low polling frequency (at most a few daily).
+MIN_SYNC_INTERVAL = timedelta(hours=6)
 
 GERMAN_LOCATIONS = (
     "germany", "berlin", "munich", "münchen", "hamburg", "frankfurt", "cologne",
@@ -132,14 +135,54 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
     return jobs
 
 
+def remotive_germany_eligible(location: str) -> bool:
+    """Accept German, EU/EMEA, or genuinely worldwide remote openings."""
+    value = (location or "").lower().strip()
+    return any(term in value for term in (
+        "germany", "deutschland", "europe", "european union",
+        "emea", "eu only", "worldwide", "anywhere", "global",
+    ))
+
+
+def fetch_remotive(client: httpx.Client, limit: int = 100) -> list[dict]:
+    """Public Remotive API; keep attribution and link directly to Remotive."""
+    response = client.get(REMOTIVE_URL, params={"limit": limit})
+    response.raise_for_status()
+    rows = response.json().get("jobs", [])
+    jobs = []
+    for item in rows:
+        title = item.get("title") or ""
+        location = item.get("candidate_required_location") or ""
+        description = strip_html(item.get("description"))
+        if not remotive_germany_eligible(location) or not relevant_role(title, description):
+            continue
+        url = item.get("url") or ""
+        if not url.startswith("https://remotive.com/"):
+            continue
+        jobs.append({
+            "source": "Remotive",
+            "source_id": str(item.get("id") or url),
+            "title": title,
+            "company": item.get("company_name") or "Unknown",
+            "location": location,
+            "remote": True,
+            "url": url,
+            "description": description,
+            "skills": extract_skills(title + " " + description),
+            "job_types": listish(item.get("job_type")),
+            "posted_at": parse_timestamp(item.get("publication_date")),
+        })
+    return jobs
+
+
 def sync_current_jobs(db: Session, force: bool = False) -> dict:
-    last_job = db.query(LiveJob).filter(LiveJob.source.in_(["Arbeitnow", "Jobicy"])).order_by(LiveJob.fetched_at.desc()).first()
+    last_job = db.query(LiveJob).filter(LiveJob.source.in_(FEED_SOURCES)).order_by(LiveJob.fetched_at.desc()).first()
     if not force and last_job and datetime.utcnow() - last_job.fetched_at < MIN_SYNC_INTERVAL:
         return {
             "stored": db.query(LiveJob).count(),
             "fetched": 0,
             "errors": [],
-            "sources": ["Arbeitnow", "Jobicy"],
+            "sources": FEED_SOURCES,
             "cached": True,
             "next_refresh_after": (last_job.fetched_at + MIN_SYNC_INTERVAL).isoformat(),
         }
@@ -147,7 +190,7 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
     fetched: list[dict] = []
     errors: list[str] = []
     with httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": "JobIntelAI/0.4"}) as client:
-        for name, loader in (("Arbeitnow", fetch_arbeitnow), ("Jobicy", fetch_jobicy)):
+        for name, loader in (("Arbeitnow", fetch_arbeitnow), ("Jobicy", fetch_jobicy), ("Remotive", fetch_remotive)):
             try:
                 fetched.extend(loader(client))
             except Exception as exc:
@@ -156,7 +199,7 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
 
     deduped = {(item["source"], item["source_id"]): item for item in fetched}
     if deduped:
-        db.query(LiveJob).filter(LiveJob.source.in_(["Arbeitnow", "Jobicy"])).delete(synchronize_session=False)
+        db.query(LiveJob).filter(LiveJob.source.in_(FEED_SOURCES)).delete(synchronize_session=False)
         now = datetime.utcnow()
         for item in deduped.values():
             db.add(LiveJob(
@@ -180,7 +223,7 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
         "stored": db.query(LiveJob).count(),
         "fetched": len(fetched),
         "errors": errors,
-        "sources": ["Arbeitnow", "Jobicy"],
+        "sources": FEED_SOURCES,
         "cached": False,
     }
 
