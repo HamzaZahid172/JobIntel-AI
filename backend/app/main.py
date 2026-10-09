@@ -19,6 +19,12 @@ from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
 from .application_preparation import build_application_package_payload
+from .job_acquisition import (
+    cv_tailoring_draft,
+    followup_draft,
+    followup_due,
+    opportunity_assessment,
+)
 from .ats_collectors import PROVIDER_SOURCE, sync_configured_ats
 from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
 from .auth import (
@@ -150,6 +156,7 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
         "skills": [s for s in job.skills.split(",") if s],
         "job_types": [s for s in job.job_types.split(",") if s],
         "match": details["overall_score"] if details else job.match_score,
+        "opportunity": opportunity_assessment(job, details) if details else None,
         "role_score": details["role_score"] if details else None,
         "matched_skills": details["matched_skills"] if details else [],
         "missing_skills": details["missing_skills"] if details else [],
@@ -278,6 +285,7 @@ def build_source_analytics(
     canonical_sources = [
         ("Arbeitnow", "Public API", True),
         ("Jobicy", "Public API", True),
+        ("Remotive", "Public API (remote; links attributed)", True),
         ("Ashby", "Employer ATS", False),
         ("Lever", "Employer ATS", False),
         ("SmartRecruiters", "Employer ATS", False),
@@ -654,6 +662,7 @@ def sources(user: User = Depends(get_current_user)):
         "active": [
             {"name": "Arbeitnow", "mode": "Public API", "status": "active"},
             {"name": "Jobicy", "mode": "Public API", "status": "active"},
+            {"name": "Remotive", "mode": "Public API; links to source", "status": "active"},
             {"name": "Lever", "mode": "Public employer postings", "status": "configurable"},
             {"name": "SmartRecruiters", "mode": "Public employer postings", "status": "configurable"},
             {"name": "Ashby", "mode": "Public Job Postings API", "status": "configurable"},
@@ -680,10 +689,13 @@ def jobs(
     live_jobs = db.query(LiveJob).order_by(LiveJob.posted_at.desc().nullslast()).all()
     if include_all or not cv:
         records = [(job, match_details(cv, job) if cv else None) for job in live_jobs]
-        if cv:
-            records.sort(key=lambda row: row[1]["overall_score"], reverse=True)
     else:
         records = candidate_job_records(cv, live_jobs, user.target_roles)
+    if cv:
+        records.sort(
+            key=lambda row: opportunity_assessment(row[0], row[1])["score"],
+            reverse=True,
+        )
     return [serialize_job(job, details) for job, details in records[: min(max(limit, 1), 500)]]
 
 
@@ -733,6 +745,115 @@ def import_job(
     cv = latest_cv(db, user.id)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
+
+
+@app.get("/api/action-center")
+def action_center(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    cv = latest_cv(db, user.id)
+    applications = (
+        db.query(Application).filter(Application.user_id == user.id).all()
+    )
+    due = [followup_draft(app, user.display_name) for app in applications if followup_due(app)]
+    if not cv:
+        return {"cv_uploaded": False, "opportunities": [], "followups": due,
+                "apply_now": 0, "review": 0}
+
+    jobs_all = db.query(LiveJob).all()
+    tracked_urls = {app.url.rstrip("/").lower() for app in applications if app.url}
+    tracked_pairs = {
+        (app.company.lower().strip(), app.role.lower().strip())
+        for app in applications
+    }
+    assessments = []
+    for job in jobs_all:
+        if job.url.rstrip("/").lower() in tracked_urls or (
+            job.company.lower().strip(), job.title.lower().strip()
+        ) in tracked_pairs:
+            continue
+        report = match_details(cv, job)
+        opportunity = opportunity_assessment(job, report)
+        if opportunity["decision"] == "Skip":
+            continue
+        assessments.append({
+            "job": serialize_job(job, report),
+            "opportunity": opportunity,
+        })
+    assessments.sort(
+        key=lambda item: (item["opportunity"]["score"], item["job"]["match"] or 0),
+        reverse=True,
+    )
+    return {
+        "cv_uploaded": True,
+        "opportunities": assessments[:12],
+        "followups": due,
+        "apply_now": sum(1 for row in assessments if row["opportunity"]["decision"] == "Apply Now"),
+        "review": sum(1 for row in assessments if row["opportunity"]["decision"] == "Review"),
+        "disclaimer": "These are heuristics, not predicted hiring probabilities.",
+    }
+
+
+@app.get("/api/cv/versions")
+def cv_versions(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    profiles = (
+        db.query(CVProfile)
+        .filter(CVProfile.user_id == user.id)
+        .order_by(CVProfile.uploaded_at.desc())
+        .limit(30)
+        .all()
+    )
+    return [{"id": row.id, "filename": row.filename,
+             "uploaded_at": row.uploaded_at.isoformat(),
+             "ats_score": row.ats_score} for row in profiles]
+
+
+@app.get("/api/jobs/{job_id}/tailor-cv")
+def tailor_cv(
+    job_id: int,
+    cv_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    cv = (
+        db.query(CVProfile)
+        .filter(CVProfile.id == cv_id, CVProfile.user_id == user.id)
+        .first()
+        if cv_id is not None else latest_cv(db, user.id)
+    )
+    if not cv:
+        raise HTTPException(400, "Upload a CV or select one of your own CV versions.")
+    report = match_details(cv, job)
+    return {"cv_id": cv.id, "cv_filename": cv.filename,
+            "match": report, "draft": cv_tailoring_draft(cv.text, job, report)}
+
+
+@app.post("/api/applications/{application_id}/follow-up-sent")
+def mark_followup_sent(
+    application_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app = (
+        db.query(Application)
+        .filter(Application.id == application_id, Application.user_id == user.id)
+        .first()
+    )
+    if app is None:
+        raise HTTPException(404, "Application not found.")
+    if not followup_due(app):
+        raise HTTPException(409, "Follow-up is not due, or this application has already closed.")
+    app.notes = ((app.notes or "").rstrip() + f"\nFollow-up sent: {date.today().isoformat()}").strip()
+    db.commit()
+    return {"ok": True, "application_id": app.id,
+            "sent_at": date.today().isoformat()}
 
 
 @app.get("/api/jobs/{job_id}/match-report")
