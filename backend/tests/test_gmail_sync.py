@@ -1,4 +1,4 @@
-from app.gmail_sync import classify_message, match_application
+from app.gmail_sync import _gmail_message_query, classify_message, match_application
 from app.models import Application
 
 
@@ -71,3 +71,11 @@ def test_unrelated_email_is_not_matched():
         )
         is None
     )
+
+
+
+def test_gmail_query_includes_trash_but_excludes_spam():
+    query = _gmail_message_query(45)
+    assert "in:anywhere" in query
+    assert "-in:spam" in query
+    assert "newer_than:45d" in query
