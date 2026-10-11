@@ -98,7 +98,9 @@ function uploadFieldComplete(field, documents = {}) {
   const kind = documentKind(field);
   const document = kind && documents[kind];
   const filename = document && document.name;
-  const text = String(field.attachmentText || "").toLowerCase();
+  // Ashby may expose the same attached-file chip through its input's label.
+  // In that case the field label includes the exact filename and "Replace".
+  const text = String(field.attachmentText || field.label || "").toLowerCase();
   if (!filename || !text || text.length > 1000) return false;
   if (!text.includes(String(filename).toLowerCase())) return false;
   if (/uploading|processing|upload failed|error uploading/.test(text)) return false;
