@@ -22,13 +22,20 @@ function safeApplicationUrl(raw) {
 function fieldValue(info, profile) {
   const text = [info.name, info.id, info.placeholder, info.label, info.autocomplete]
     .filter(Boolean).join(" ").toLowerCase().replace(/[_-]/g, " ");
+  const exactName = String(info.name || info.id || "").trim().toLowerCase();
+  const label = String(info.label || "").trim().replace(/[*:]+$/, "").trim().toLowerCase();
   if (info.type === "hidden" || info.type === "password" ||
       info.type === "checkbox" || info.type === "radio" || info.type === "file" ||
       info.tag === "select") return null;
+  if ((exactName === "name" || exactName === "fullname" || label === "name") &&
+      info.tag !== "select" && info.type !== "file") {
+    return {key:"fullName",value:String(profile.fullName || "").trim()};
+  }
   const tests = [
     [/(first\s*name|given\s*name|vorname|fname)/, "firstName"],
     [/(last\s*name|family\s*name|surname|nachname|lname)/, "lastName"],
     [/(full\s*name|your\s*name|applicant\s*name|candidate\s*name)/, "fullName"],
+    [/^(name|name required|name \*|name:|applicant|candidate)$/,"fullName"],
     [/(e\s*mail|email)/, "email"],
     [/(phone|mobile|telephone|telefon)/, "phone"],
     [/(linkedin)/, "linkedin"],
@@ -50,6 +57,36 @@ function documentKind(info) {
   if (/resume|résumé|curriculum|cv|lebenslauf/.test(text)) return "cv";
   return null;
 }
+const ATS_HOSTS = [
+  "ashbyhq.com", "greenhouse.io", "greenhouse.com", "lever.co",
+  "smartrecruiters.com", "workdayjobs.com", "myworkdayjobs.com",
+  "workable.com", "personio.de", "recruitee.com", "bamboohr.com",
+  "teamtailor.com", "jobvite.com", "icims.com"
+];
+function isAtsUrl(raw) {
+  if (!safeApplicationUrl(raw)) return false;
+  const host = new URL(raw).hostname.toLowerCase();
+  return ATS_HOSTS.some(ats => host === ats || host.endsWith("." + ats));
+}
+function applicationLinks(links, currentUrl) {
+  const current = new URL(currentUrl).hostname.toLowerCase();
+  const seen = new Set(), result = [];
+  for (const item of links) {
+    const url = String(item.href || "");
+    if (!safeApplicationUrl(url) || seen.has(url)) continue;
+    const title = String(item.text || "").trim().slice(0, 140);
+    const host = new URL(url).hostname.toLowerCase();
+    const external = host !== current;
+    const action = /\b(apply|application|bewerben|bewerbung|jetzt bewerben|apply now)\b/i.test(title);
+    if (!action && !isAtsUrl(url)) continue;
+    if (!external && !/\b(apply|bewerben|bewerbung)\b/i.test(title)) continue;
+    if (/\b(sign in|log in|privacy|cookie|newsletter|advertise)\b/i.test(title)) continue;
+    seen.add(url);
+    result.push({url, title:title || "Employer application", external, ats:isAtsUrl(url)});
+  }
+  return result.sort((a,b)=>Number(b.ats)-Number(a.ats)).slice(0,8);
+}
+
 function submissionLabel(text) {
   const normalized = String(text || "").trim().toLowerCase();
   return /^(submit( application)?|send application|apply now|bewerbung absenden|jetzt bewerben|send bewerbung|submit and apply)(\s*[→›])?$/.test(normalized);
@@ -59,4 +96,4 @@ function nextLabel(text) {
   return /^(apply|apply for this job|apply now|start application|continue|next|weiter|bewerben|zur bewerbung)(\s*[→›])?$/.test(normalized)
     && !submissionLabel(normalized);
 }
-module.exports = {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel};
+module.exports = {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel,isAtsUrl,applicationLinks};
