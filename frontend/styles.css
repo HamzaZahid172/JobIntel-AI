@@ -125,3 +125,11 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .followupContactOption small{flex:1;min-width:min(180px,100%);overflow-wrap:anywhere;line-height:1.5}
 .followupContactOption button{font-size:11px}
 .followupContactOption a,.followupGoogleLink{color:#125eac;text-decoration:underline;font-size:11px;overflow-wrap:anywhere}
+
+.followupLookupActions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 4px}
+.followupLookupStatus{font-size:11px;color:#52677f;overflow-wrap:anywhere}
+.followupContactResults{display:grid;gap:6px;margin:4px 0 8px;min-width:0}
+.followupContactOption{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px;border:1px solid #d6e6f4;border-radius:9px;background:#f4f9ff}
+.followupContactOption small{flex:1;min-width:min(180px,100%);overflow-wrap:anywhere;line-height:1.5}
+.followupContactOption button{font-size:11px}
+.followupContactOption a,.followupGoogleLink{color:#125eac;text-decoration:underline;font-size:11px;overflow-wrap:anywhere}
