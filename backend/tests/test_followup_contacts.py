@@ -8,6 +8,7 @@ from app.db import Base
 from app.followup_contacts import (
     valid_contact, known_employer_domain, event_contacts, description_contacts,
     mailbox_contacts, normalize_candidates, discover_contact, _web_contact_candidates,
+    _relevant_company_mail,
 )
 from app.models import Application, GmailConnection, GmailEvent, LiveJob
 
@@ -117,3 +118,48 @@ def test_optional_public_web_search_checks_company_domain_and_real_email(monkeyp
     assert len(rows)==1
     assert rows[0]["email"]=="recruiting@trusteq.de"
     assert rows[0]["confidence"]=="review"
+
+
+def test_unique_employer_domain_email_can_match_generic_application_subject():
+    app = Application(id=1, user_id=1, company="Trusteq GmbH",
+                      role="Backend Python Engineer", status="Applied")
+    meta = {"subject": "Update about your application",
+            "from": "Recruiting Team <talent@trusteq.de>", "reply-to": ""}
+    assert _relevant_company_mail(app, [app], meta, "")
+    assert not _relevant_company_mail(app, [app], {"subject": "Monthly newsletter", "from": "talent@trusteq.de"}, "")
+    assert not _relevant_company_mail(app, [app], {"subject": "Your application", "from": "someone@unrelated.org"}, "")
+
+
+def test_generic_subject_never_selects_ambiguous_same_employer_role():
+    app = Application(id=1, user_id=1, company="Trusteq GmbH",
+                      role="Backend Python Engineer", status="Applied")
+    other = Application(id=2, user_id=1, company="Trusteq GmbH",
+                        role="Data Engineer", status="Applied")
+    assert not _relevant_company_mail(app, [app, other],
+        {"subject": "Your application update", "from": "talent@trusteq.de"}, "")
+
+
+def test_generic_subject_from_verified_employer_finds_real_reply_to(monkeypatch):
+    app = Application(id=11, user_id=1, company="Trusteq GmbH",
+                      role="Backend Python Engineer", status="Applied",
+                      applied_date=date(2026, 10, 1))
+    conn = SimpleNamespace(access_token="token", token_expires_at=datetime(2027, 1, 1),
+                           google_email="candidate@gmail.com")
+    class Response:
+        def __init__(self, obj): self.obj=obj
+        def raise_for_status(self): pass
+        def json(self): return self.obj
+    def fake_get(url, headers, params, timeout):
+        if url.endswith("/messages"):
+            return Response({"messages":[{"id":"m1"}]})
+        return Response({"snippet":"Your application has been received",
+                         "internalDate":str(1791504000000),
+                         "payload":{"headers":[
+                             {"name":"Subject","value":"Your application update"},
+                             {"name":"From","value":"Recruitment <talent@trusteq.de>"},
+                             {"name":"Reply-To","value":"hiring@trusteq.de"},
+                         ]}})
+    monkeypatch.setattr("app.followup_contacts.httpx.get", fake_get)
+    contacts=mailbox_contacts(None,conn,app,[app])
+    assert contacts[0]["email"]=="hiring@trusteq.de"
+    assert contacts[0]["source"]=="gmail_reply_to"
