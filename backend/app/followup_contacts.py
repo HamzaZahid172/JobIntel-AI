@@ -14,7 +14,7 @@ from .models import Application, GmailConnection, GmailEvent, LiveJob
 EMAIL_RE = re.compile(r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])")
 BAD_MAILBOX = re.compile(
     r"(^|[._-])(no.?reply|do.?not.?reply|notification|automated|mailer.?daemon|"
-    r"bounce|unsubscribe|newsletter|alerts?|marketing|support|helpdesk)([._+-]|$)", re.I,
+    r"bounce|unsubscribe|newsletter|alerts?|marketing|support|help|helpdesk|sales|billing|press|media)([._+-]|$)", re.I,
 )
 FREE_DOMAINS = {"gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "yahoo.com", "icloud.com", "gmx.de", "web.de"}
 JOB_BOARD_HOSTS = {"arbeitnow.com", "jobicy.com", "remotive.com", "linkedin.com", "indeed.com", "stepstone.de", "workwise.io", "glassdoor.com"}
