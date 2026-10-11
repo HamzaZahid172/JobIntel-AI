@@ -3,7 +3,7 @@
    No remote service, bulk application, automatic consent, or CAPTCHA bypass. */
 const http = require("node:http");
 const { randomUUID } = require("node:crypto");
-const {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel,isAtsUrl,applicationLinks} = require("./form-tools");
+const {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel,isAtsUrl,applicationLinks,uploadFieldComplete,requiredFieldsMissing} = require("./form-tools");
 
 const HOST = "127.0.0.1", PORT = Number(process.env.JOBINTEL_ASSISTANT_PORT || 3401);
 const ALLOWED = new Set(["http://localhost:3100", "http://127.0.0.1:3100"]);
@@ -62,7 +62,8 @@ function activePage() {
   return session.page;
 }
 async function visibleFields(page) {
-  return page.evaluate(()=>{
+  const expectedFiles=Object.values(session?.docs || {}).map(doc=>doc.name);
+  return page.evaluate((expectedFiles)=>{
     const nodes=Array.from(document.querySelectorAll("input,textarea,select"));
     const labelOf = e=>{
       const labels=e.labels ? Array.from(e.labels).map(x=>x.innerText||x.textContent).join(" ") : "";
@@ -74,6 +75,20 @@ async function visibleFields(page) {
          e.parentElement?.parentElement?.textContent || "").trim().slice(0,160) : "";
       return [labels,viaId,direct,nearest].filter(Boolean).join(" ").replace(/\s+/g," ").slice(0,240);
     };
+    const attachedFileText=e=>{
+      // Scoped to the file-upload widget. Never trust filename mentions elsewhere.
+      let node=e.parentElement;
+      for(let depth=0;node && depth<9;depth++,node=node.parentElement){
+        if(node===document.body || node.tagName==="FORM") break;
+        const text=String(node.innerText||"").replace(/\s+/g," ").trim();
+        if(text.length>1000 || !text) continue;
+        if(expectedFiles.some(filename=>text.toLowerCase().includes(filename.toLowerCase())) &&
+            /replace|remove|delete|attached|uploaded|ersetzen|entfernen/i.test(text)){
+          return text;
+        }
+      }
+      return "";
+    };
     return nodes.map((e,index)=>{
       const type=(e.type||"").toLowerCase();
       const visible=!!(e.offsetWidth||e.offsetHeight||e.getClientRects().length);
@@ -81,13 +96,14 @@ async function visibleFields(page) {
       return {index,tag:e.tagName.toLowerCase(),type,name:e.name||"",id:e.id||"",
         placeholder:e.placeholder||"",autocomplete:e.autocomplete||"",
         label:labelOf(e),required:!!e.required,
+        attachmentText:files?attachedFileText(e):"",
         filled:files?Boolean(e.files&&e.files.length):
           type==="radio"&&e.name?Array.from(document.getElementsByName(e.name)).some(x=>x.checked):
           type==="checkbox"?e.checked:!!e.value,
         visible};
     }).filter(x=>(x.visible||x.type==="file")&&x.type!=="hidden"&&x.type!=="password")
       .slice(0,120);
-  });
+  },expectedFiles);
 }
 async function discoverLinks(page) {
   const links=await page.evaluate(()=>Array.from(document.querySelectorAll("a[href]")).map(a=>({
@@ -109,10 +125,14 @@ async function review() {
   const [fields,links,consent]=await Promise.all([
     visibleFields(page),discoverLinks(page),consentVisible(page)
   ]);
+  const prepared=fields.map(x=>({
+    ...x,kind:x.type==="file"?documentKind(x):null,
+    filled:uploadFieldComplete(x,session.docs),
+  }));
   return {active:true,id:session.id,url:page.url(),title:await page.title(),
     stage:isAtsUrl(page.url())?"employer ATS":links.length?"job listing":"employer page",
     applicationLinks:links,consentRequired:consent,
-    fields:fields.map(x=>({...x,kind:x.type==="file"?documentKind(x):null})),
+    fields:prepared.map(({attachmentText,...x})=>x), // omit personal filenames from raw widget text
     status:session.status,notes:session.notes,submissionAttempted:session.submissionAttempted};
 }
 async function openApplication(input) {
@@ -173,7 +193,7 @@ async function fill() {
   const profile={...session.profile,fullName:session.profile.fullName||
     [session.profile.firstName,session.profile.lastName].filter(Boolean).join(" ")};
   for(const field of fields){
-    if(field.filled)continue;
+    if(uploadFieldComplete(field,session.docs))continue;
     const locator=page.locator("input,textarea,select").nth(field.index);
     try {
       if(field.type==="file"){
@@ -227,7 +247,7 @@ async function submit(approval) {
   const page=activePage();
   if(!isAtsUrl(page.url()))throw Error("Open the actual employer application form before approving submission.");
   const fields=await visibleFields(page);
-  const missing=fields.filter(x=>x.required&&!x.filled);
+  const missing=requiredFieldsMissing(fields,session.docs);
   if(missing.length)throw Error("Required fields still empty: "+missing.slice(0,6).map(x=>x.label||x.name||"unnamed field").join(", "));
   const buttons=await page.locator("button,input[type=submit]").all();
   const matched=[];
