@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Validate Docker Compose configuration
+        run: docker compose -f docker-compose.yml config --quiet
       - run: node --check frontend/app.js
       - name: Check local browser assistant syntax
         run: |
