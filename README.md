@@ -340,3 +340,29 @@ Analytics now distinguishes **supported/configurable sources** from sources that
 Skill Gap now uses the structured Match Layer's **missing required** and **missing preferred** skills instead of a flat extracted-keyword comparison.
 
 See `docs/V0.7.1_ANALYTICS_FIX_REPORT.md`.
+
+
+## Finding recruiter contacts for follow-ups
+
+In **Action Center → Recruiter follow-up assistant**, JobIntel suggests addresses from
+matched Gmail application correspondence and emails explicitly published in matching
+job descriptions. Click **Find Contact Email** for a fresh read-only Gmail lookup,
+including Trash, to find the actual **Reply-To** or **From** address for that
+application.
+
+* A contact is pre-filled automatically only if there is one unambiguous
+  matching company-domain address from Gmail. Other candidates require selection
+  with **Use this email** and source review.
+* No mailbox addresses are guessed from company names. No-reply, marketing and
+  job-board addresses are filtered out. When no credible contact is found, the
+  UI offers a Google search link for manual confirmation.
+* Optional automated public-web search uses Brave Search API with
+  BRAVE_SEARCH_API_KEY in your own .env file. It is **not required** for Gmail
+  discovery. Brave's monthly credit allowance may require account/payment
+  details to access; leave the variable blank if you prefer no external
+  searching or charges. Web results are labelled **review**, never silently sent.
+* Sending emails still needs separate Google Gmail Send OAuth authorization and
+  a final **Review & Send** confirmation. Read-only Gmail permissions suffice
+  for finding contacts.
+
+See docs/FOLLOWUP_CONTACTS.md for testing and limitations.
