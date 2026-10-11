@@ -774,6 +774,10 @@ function bindAssistedApply(){
 }
 bindAssistedApply();
 
+// Cache per-session lookup outcomes to avoid repeatedly querying Gmail on rerenders.
+const followupContactCache = new Map();
+const FOLLOWUP_CONTACT_TTL_MS = 15 * 60 * 1000;
+
 async function renderActionCenter(){
   const results=await Promise.all([
     apiFetch('/api/action-center'),
@@ -791,7 +795,7 @@ async function renderActionCenter(){
     (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs evidence from your CV.</p></div>':'') +
     '<div class="pageIntro"><h3>Best current opportunities</h3></div>' +
     '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No strong matching openings in the current feed. Refresh jobs or add employer ATS collectors.'))+'</div>' +
-    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>JobIntel searches your application emails and job advertisements for contact details. Use Find Contact Email for a fresh Gmail lookup. Public web search is optional, and every recipient must be checked before sending.</p></div>' +
+    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>JobIntel checks your connected Gmail automatically when follow-ups are due. It displays the source of every suggested address. Review the recipient and message before sending.</p></div>' +
     '<div class="followupGrid">'+(action.followups.map(function(row){
       return '<article class="card followupCard" data-app-id="'+row.application_id+'">'+
         '<h3>'+esc(row.role)+'</h3><p>'+esc(row.company)+' · '+row.days_waiting+' days waiting</p>'+
@@ -855,12 +859,15 @@ async function renderActionCenter(){
     const body=card.querySelector('.followupBody');
     const current=action.followups.find(function(item){return item.application_id===id;});
     if(current && current.recipient_lookup)renderContactOptions(card,current.recipient_lookup);
+    const cached=followupContactCache.get(id);
+    if(cached && Date.now()-cached.at<FOLLOWUP_CONTACT_TTL_MS)renderContactOptions(card,cached.result);
     const find=card.querySelector('.followupFindContact');
     find.onclick=async function(){
       find.disabled=true;
       card.querySelector('.followupLookupStatus').textContent='Searching Gmail messages and available public sources...';
       try{
         const lookup=await apiFetch('/api/applications/'+id+'/find-contact',{method:'POST'});
+        followupContactCache.set(id,{at:Date.now(),result:lookup});
         renderContactOptions(card,lookup);
       }catch(err){
         card.querySelector('.followupLookupStatus').textContent='Contact search could not complete: '+err.message;
@@ -896,6 +903,36 @@ async function renderActionCenter(){
       }catch(err){alert('Could not record follow-up: '+err.message);}
     };
   });
+
+  // Run real server-side Gmail searches automatically without blocking the job queue.
+  // Limit concurrency to protect Gmail quotas and avoid repeated requests on rerender.
+  if(gmail.connected){
+    const due=action.followups.filter(function(row){
+      const cached=followupContactCache.get(row.application_id);
+      if(cached && Date.now()-cached.at<FOLLOWUP_CONTACT_TTL_MS)return false;
+      // Strong saved employer-domain evidence already provides a recipient.
+      return !(row.recipient_lookup && row.recipient_lookup.recommended);
+    }).slice(0,10);
+    let nextIndex=0;
+    async function lookupWorker(){
+      while(nextIndex<due.length){
+        const row=due[nextIndex++];
+        const card=page.querySelector('.followupCard[data-app-id="'+row.application_id+'"]');
+        if(!card)continue;
+        const status=card.querySelector('.followupLookupStatus');
+        status.textContent='Searching Gmail automatically for an employer reply address...';
+        try{
+          const lookup=await apiFetch('/api/applications/'+row.application_id+'/find-contact',{method:'POST'});
+          followupContactCache.set(row.application_id,{at:Date.now(),result:lookup});
+          // Navigation may have replaced the Action Center; don't update stale cards.
+          if(card.isConnected)renderContactOptions(card,lookup);
+        }catch(err){
+          if(card.isConnected)status.textContent='Automatic lookup failed. Use Find Contact Email to retry.';
+        }
+      }
+    }
+    await Promise.all([lookupWorker(),lookupWorker()]);
+  }
 }
 
 async function showAtsReview(jobId){
