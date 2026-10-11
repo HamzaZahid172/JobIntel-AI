@@ -109,3 +109,10 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .assistModalCard details{margin-top:12px;font-size:13px}
 .assistModalCard .codeSample{white-space:pre-wrap}
 @media(max-width:690px){.assistFields{grid-template-columns:minmax(0,1fr)}.assistModalCard{padding:16px}}
+
+/* Guided handoff: display real employer ATS destination before file uploads. */
+.assistHandoff{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:13px 0;padding:14px;border-radius:12px;background:#eaf4ff;border:1px solid #c8defa}
+.assistHandoff label{display:grid;gap:6px;min-width:min(100%,320px);flex:1;color:#1f4167;font-weight:650}
+.assistHandoff select{width:100%;min-width:0;padding:10px;border-radius:8px;border:1px solid #bacfe7;background:#fff;font:inherit}
+.assistHandoff button{white-space:normal;min-height:38px}
+.assistNotice{padding:9px 12px;border-radius:9px;background:#fff5e4;color:#704919;border:1px solid #f0d6a2;font-size:12px}
