@@ -116,3 +116,12 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .assistHandoff select{width:100%;min-width:0;padding:10px;border-radius:8px;border:1px solid #bacfe7;background:#fff;font:inherit}
 .assistHandoff button{white-space:normal;min-height:38px}
 .assistNotice{padding:9px 12px;border-radius:9px;background:#fff5e4;color:#704919;border:1px solid #f0d6a2;font-size:12px}
+
+/* Source-grounded contact finding on follow-up cards */
+.followupLookupActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 4px}
+.followupLookupStatus{font-size:11px;color:#52677f;overflow-wrap:anywhere}
+.followupContactResults{display:grid;gap:6px;margin:4px 0 8px;min-width:0}
+.followupContactOption{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px;border:1px solid #d6e6f4;border-radius:9px;background:#f4f9ff}
+.followupContactOption small{flex:1;min-width:min(180px,100%);overflow-wrap:anywhere;line-height:1.5}
+.followupContactOption button{font-size:11px}
+.followupContactOption a,.followupGoogleLink{color:#125eac;text-decoration:underline;font-size:11px;overflow-wrap:anywhere}
