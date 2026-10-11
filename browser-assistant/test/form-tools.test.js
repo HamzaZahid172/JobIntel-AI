@@ -86,3 +86,10 @@ test("Visual resume evidence is scoped to the exact user-selected document",()=>
   assert.equal(uploadFieldComplete(field,{cv:{name:"Another-Resume.pdf"}}),false);
   assert.equal(uploadFieldComplete({...field,attachmentText:""}, {cv:{name:"Hamza_Zahid_Butt-CV.pdf"}}),false);
 });
+
+test("Ashby screenshot-style file input label proves existing attachment",()=>{
+  const field={name:"resume",type:"file",required:true,filled:false,
+    label:"Resume ResumeHamza_Zahid_Butt-CV.pdfReplace or drag and drop here"};
+  assert.equal(uploadFieldComplete(field,{cv:{name:"Hamza_Zahid_Butt-CV.pdf"}}),true);
+  assert.equal(uploadFieldComplete({...field,label:"Resume* Upload file"}, {cv:{name:"Hamza_Zahid_Butt-CV.pdf"}}),false);
+});
