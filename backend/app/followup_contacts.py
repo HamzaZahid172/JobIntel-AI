@@ -113,6 +113,27 @@ def _gmail_metadata(message: dict) -> dict:
     }
 
 
+def _relevant_company_mail(app: Application, applications: list[Application], meta: dict, snippet: str) -> bool:
+    """Fallback for unique employer-domain application emails without company text.
+
+    Never attribute a message to an ambiguous same-company role.
+    """
+    text = " ".join([meta.get("subject", ""), snippet]).lower()
+    if not any(word in text for word in (
+        "application", "bewerbung", "interview", "screening", "assessment",
+        "candidate", "position", "your interest", "hiring",
+    )):
+        return False
+    addresses = (meta.get("reply-to", ""), meta.get("from", ""))
+    if not any(
+        (parsed := valid_contact(raw)) and known_employer_domain(parsed.rsplit("@", 1)[1], app.company)
+        for raw in addresses
+    ):
+        return False
+    siblings = [row for row in applications if row.company.casefold().strip() == app.company.casefold().strip()]
+    return len(siblings) == 1 and siblings[0].id == app.id
+
+
 def mailbox_contacts(db: Session, connection: GmailConnection, app: Application, applications: list[Application]) -> list[dict]:
     token = ensure_access_token(db, connection)
     headers = {"Authorization": f"Bearer {token}"}
@@ -139,7 +160,7 @@ def mailbox_contacts(db: Session, connection: GmailConnection, app: Application,
         meta = _gmail_metadata(message)
         subject, sender, snippet = meta.get("subject", ""), meta.get("from", ""), message.get("snippet", "")
         matched = match_application(applications, subject, sender, snippet)
-        if matched is None or matched.id != app.id:
+        if (matched is None or matched.id != app.id) and not _relevant_company_mail(app, applications, meta, snippet):
             continue
         internal = message.get("internalDate")
         if internal and app.applied_date:
