@@ -791,11 +791,13 @@ async function renderActionCenter(){
     (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs evidence from your CV.</p></div>':'') +
     '<div class="pageIntro"><h3>Best current opportunities</h3></div>' +
     '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No strong matching openings in the current feed. Refresh jobs or add employer ATS collectors.'))+'</div>' +
-    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>Edit the message and enter a verified recruiter address before sending. Gmail Send requires separate consent.</p></div>' +
+    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>JobIntel searches your application emails and job advertisements for contact details. Use Find Contact Email for a fresh Gmail lookup. Public web search is optional, and every recipient must be checked before sending.</p></div>' +
     '<div class="followupGrid">'+(action.followups.map(function(row){
       return '<article class="card followupCard" data-app-id="'+row.application_id+'">'+
         '<h3>'+esc(row.role)+'</h3><p>'+esc(row.company)+' · '+row.days_waiting+' days waiting</p>'+
-        '<label>Recruiter email address (enter verified address)<input class="followupTo" type="email" placeholder="recruiter@company.com"></label>'+
+        '<label>Recruiter email address <small>(suggested automatically when supported by evidence)</small><input class="followupTo" type="email" placeholder="Find contact email below" value="'+esc((row.recipient_lookup||{}).recommended||'')+'"></label>'+
+        '<div class="followupLookupActions"><button type="button" class="secondary followupFindContact">Find Contact Email</button><span class="followupLookupStatus" role="status"></span></div>'+
+        '<div class="followupContactResults"></div>'+
         '<label>Email subject<input class="followupSubject" value="'+esc(row.subject)+'"></label>'+
         '<label>Editable email draft<textarea class="followupBody" rows="9">'+esc(row.body)+'</textarea></label>'+
         '<div class="prepActions">'+
@@ -807,11 +809,63 @@ async function renderActionCenter(){
         '</article>';
     }).join('')||empty('No follow-ups are due right now.'))+'</div>';
   bindTrackButtons();
+  function renderContactOptions(card, lookup){
+    const target=card.querySelector('.followupContactResults');
+    const status=card.querySelector('.followupLookupStatus');
+    const addr=card.querySelector('.followupTo');
+    target.replaceChildren();
+    const contacts=lookup.candidates||[];
+    if(lookup.recommended && !addr.value.trim()) addr.value=lookup.recommended;
+    status.textContent=lookup.warning||(
+      contacts.length?contacts.length+' sourced contact(s) found. Review the address before sending.':
+      'No reliable contact found yet. Do not guess an email address.'
+    );
+    contacts.forEach(function(contact){
+      const item=document.createElement('div');
+      item.className='followupContactOption';
+      const detail=document.createElement('small');
+      detail.textContent=contact.email+' · '+contact.source.replace(/_/g,' ')+' · '+contact.confidence+
+        ' confidence · '+contact.source_detail;
+      item.appendChild(detail);
+      const use=document.createElement('button');
+      use.type='button';
+      use.className='secondary';
+      use.textContent='Use this email';
+      use.onclick=function(){addr.value=contact.email;status.textContent='Selected '+contact.email+'; verify the destination before sending.';};
+      item.appendChild(use);
+      if(contact.evidence_url && /^https:\/\//i.test(contact.evidence_url)){
+        const link=document.createElement('a');
+        link.href=contact.evidence_url;link.target='_blank';link.rel='noopener noreferrer';
+        link.textContent='View source ↗';item.appendChild(link);
+      }
+      target.appendChild(item);
+    });
+    if(lookup.web_search_url && /^https:\/\/www\.google\.com\/search\?/i.test(lookup.web_search_url)){
+      const link=document.createElement('a');
+      link.href=lookup.web_search_url;link.target='_blank';link.rel='noopener noreferrer';
+      link.className='followupGoogleLink';
+      link.textContent='Search Google for official employer recruiting contacts ↗';
+      target.appendChild(link);
+    }
+  }
   document.querySelectorAll('.followupCard').forEach(function(card){
     const id=Number(card.dataset.appId);
     const addr=card.querySelector('.followupTo');
     const subject=card.querySelector('.followupSubject');
     const body=card.querySelector('.followupBody');
+    const current=action.followups.find(function(item){return item.application_id===id;});
+    if(current && current.recipient_lookup)renderContactOptions(card,current.recipient_lookup);
+    const find=card.querySelector('.followupFindContact');
+    find.onclick=async function(){
+      find.disabled=true;
+      card.querySelector('.followupLookupStatus').textContent='Searching Gmail messages and available public sources...';
+      try{
+        const lookup=await apiFetch('/api/applications/'+id+'/find-contact',{method:'POST'});
+        renderContactOptions(card,lookup);
+      }catch(err){
+        card.querySelector('.followupLookupStatus').textContent='Contact search could not complete: '+err.message;
+      }finally{find.disabled=false;}
+    };
     card.querySelector('.followupCopy').onclick=async function(){
       try{await navigator.clipboard.writeText('To: '+addr.value+'\nSubject: '+subject.value+'\n\n'+body.value);
         this.textContent='Copied ✓';
