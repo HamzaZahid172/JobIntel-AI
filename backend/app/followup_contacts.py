@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .gmail_sync import GMAIL_API, ensure_access_token, match_application
 from .models import Application, GmailConnection, GmailEvent, LiveJob
 
-EMAIL_RE = re.compile(r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])")
+EMAIL_RE = re.compile(r"(?<![\w.+-])[A-Za-z0-9.!#$%&'*+/=?^_{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w-])")
 BAD_MAILBOX = re.compile(
     r"(^|[._-])(no.?reply|do.?not.?reply|notification|automated|mailer.?daemon|"
     r"bounce|unsubscribe|newsletter|alerts?|marketing|support|help|helpdesk|sales|billing|press|media)([._+-]|$)", re.I,
