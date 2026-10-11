@@ -87,6 +87,30 @@ function applicationLinks(links, currentUrl) {
   return result.sort((a,b)=>Number(b.ats)-Number(a.ats)).slice(0,8);
 }
 
+/**
+ * Ashby may upload the file asynchronously and clear the native input after
+ * showing an attached-file chip. The native FileList alone is not sufficient.
+ * Only accept scoped visual evidence of the exact CV the applicant selected.
+ */
+function uploadFieldComplete(field, documents = {}) {
+  if (field.type !== "file") return Boolean(field.filled);
+  if (field.filled) return true; // Browser still has a real FileList.
+  const kind = documentKind(field);
+  const document = kind && documents[kind];
+  const filename = document && document.name;
+  // Ashby may expose the same attached-file chip through its input's label.
+  // In that case the field label includes the exact filename and "Replace".
+  const text = String(field.attachmentText || field.label || "").toLowerCase();
+  if (!filename || !text || text.length > 1000) return false;
+  if (!text.includes(String(filename).toLowerCase())) return false;
+  if (/uploading|processing|upload failed|error uploading/.test(text)) return false;
+  // "Replace" or "Remove" is a strong signal the upload UI now holds a file.
+  return /replace|remove|delete|attached|uploaded|ersetzen|entfernen/i.test(text);
+}
+function requiredFieldsMissing(fields, documents = {}) {
+  return fields.filter(field => field.required && !uploadFieldComplete(field, documents));
+}
+
 function submissionLabel(text) {
   const normalized = String(text || "").trim().toLowerCase();
   return /^(submit( application)?|send application|apply now|bewerbung absenden|jetzt bewerben|send bewerbung|submit and apply)(\s*[→›])?$/.test(normalized);
@@ -96,4 +120,4 @@ function nextLabel(text) {
   return /^(apply|apply for this job|apply now|start application|continue|next|weiter|bewerben|zur bewerbung)(\s*[→›])?$/.test(normalized)
     && !submissionLabel(normalized);
 }
-module.exports = {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel,isAtsUrl,applicationLinks};
+module.exports = {safeApplicationUrl,fieldValue,documentKind,submissionLabel,nextLabel,isAtsUrl,applicationLinks,uploadFieldComplete,requiredFieldsMissing};
