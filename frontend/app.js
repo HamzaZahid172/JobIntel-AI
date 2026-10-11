@@ -660,15 +660,33 @@ function assistReview(status){
   const target=document.querySelector('#assistReview');
   if(!status||!status.active){target.textContent='No active session.';return;}
   const fields=status.fields||[];
+  const links=(status.applicationLinks||[]);
   target.innerHTML='<b>Employer browser: '+esc(status.title||'Application form')+'</b>'+
-    '<p>Stage: '+esc(status.status)+' · '+fields.length+' visible fields · '+fields.filter(function(x){return x.filled;}).length+' filled</p>'+
-    '<a target="_blank" rel="noopener" href="'+esc(status.url)+'">Employer page ↗</a>'+
+    '<p>Stage: '+esc(status.stage||status.status)+' · '+fields.length+' detected fields · '+fields.filter(function(x){return x.filled;}).length+' filled</p>'+
+    '<a target="_blank" rel="noopener" href="'+esc(status.url)+'">Current browser page ↗</a>'+
+    (status.consentRequired?'<p class="assistNotice">Cookie/privacy consent detected. Review your preferences directly in Chromium; JobIntel will not accept automatically.</p>':'')+
+    (links.length?'<div class="assistHandoff"><label>Employer application link<select id="assistLinkSelect">'+
+      links.map(function(x){return '<option value="'+esc(x.url)+'">'+esc(x.title)+' — '+esc(new URL(x.url).hostname)+'</option>';}).join('')+
+      '</select></label><button id="assistOpenEmployer" type="button" class="primary">Open Actual Application Form →</button></div>':'')+
     '<h4>Fields to review</h4><ul>'+
     fields.filter(function(x){return x.required&&!x.filled||x.type==='file'&&!x.filled;}).slice(0,16).map(function(x){
       return '<li>'+esc(x.label||x.name||x.id||x.type)+' '+(x.required?'(required)':'')+(x.kind?' — '+esc(x.kind):'')+'</li>';
     }).join('')+'</ul>'+
     '<p>'+esc((status.notes||[]).slice(-3).join(' | '))+'</p>'+
     (status.submissionAttempted?'<p><b>Submission was attempted. Verify employer confirmation before recording as Applied.</b></p>':'');
+  const open=document.querySelector('#assistOpenEmployer');
+  if(open)open.onclick=async function(){
+    const url=document.querySelector('#assistLinkSelect').value;
+    const selected=links.find(function(item){return item.url===url;});
+    if(!selected || !confirm('Open '+new URL(selected.url).hostname+' in the Playwright browser? Confirm the company and vacancy before uploading documents.'))return;
+    open.disabled=true;
+    try{
+      assistMessage('Opening the employer application form...');
+      const next=await assistRequest('/open-application',{url:selected.url});
+      assistReview(next);
+      assistMessage('Employer application opened. Inspect the actual form, then Fill Known Fields & Attach.');
+    }catch(err){assistMessage(err.message);open.disabled=false;}
+  };
 }
 function openAssistModal(job){
   if(!job.url){alert('This opportunity has no application link.');return;}

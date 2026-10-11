@@ -13,6 +13,10 @@ npm start
 
 Keep this terminal running. It listens on **127.0.0.1:3401**, accepts browser requests only from local JobIntel UI origins (localhost:3100 / 127.0.0.1:3100), and stores form data and attachments in memory for the active session. Close the assistant to discard them.
 
+For listings like Arbeitnow → Statista, **Inspect** shows the current listing and an employer-application link. Click **Open Actual Application Form** to open the confirmed Ashby/other employer ATS URL in the controlled Chromium browser. If you manually click the job site's Apply button and it opens an ATS tab, click **Inspect Form** again; the assistant now follows the newer ATS tab.
+
+The assistant detects standard Ashby Name, Email and Phone fields, including hidden résumé file inputs when they have a recognizable label/name. Cookie consent is never accepted automatically. If a custom upload control or other unusual input is not recognized, complete it manually in Chromium. Any unfamiliar site transition must be checked before sharing documents.
+
 Go to JobIntel AI → Job Market / Action Center → **Assisted Apply**. Select up to three files (CV, cover letter, experience/reference letter), review personal details, and start the browser. Chromium appears on the Mac desktop. Use **Fill Known Fields**, **Inspect**, and **Continue** for the steps the worker can recognize. Unrecognized questions, CAPTCHA, sign-in, verification and GDPR consent must be handled by the applicant inside Chromium.
 
 ## Submission
