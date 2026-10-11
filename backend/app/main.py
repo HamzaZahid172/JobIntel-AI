@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from .assistant import answer, assistant_status
 from .ats_simulator import ats_review as evaluate_cv_ats
 from .application_preparation import build_application_package_payload
+from .followup_contacts import discover_contact
 from .job_acquisition import (
     cv_tailoring_draft,
     followup_draft,
@@ -777,7 +778,12 @@ def action_center(
     applications = (
         db.query(Application).filter(Application.user_id == user.id).all()
     )
-    due = [followup_draft(app, user.display_name) for app in applications if followup_due(app)]
+    due = []
+    for app in applications:
+        if followup_due(app):
+            draft = followup_draft(app, user.display_name)
+            draft["recipient_lookup"] = discover_contact(db, user.id, app)
+            due.append(draft)
     if not cv:
         return {"cv_uploaded": False, "opportunities": [], "followups": due,
                 "apply_now": 0, "review": 0}
@@ -875,6 +881,22 @@ def mark_followup_sent(
     db.commit()
     return {"ok": True, "application_id": app.id,
             "sent_at": date.today().isoformat()}
+
+
+@app.post("/api/applications/{application_id}/find-contact")
+def find_followup_contact(
+    application_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app = db.query(Application).filter(
+        Application.user_id == user.id, Application.id == application_id
+    ).first()
+    if app is None:
+        raise HTTPException(404, "Application not found.")
+    if not followup_due(app):
+        raise HTTPException(409, "This application is not due for a follow-up.")
+    return discover_contact(db, user.id, app, search=True)
 
 
 @app.post("/api/applications/{application_id}/send-follow-up")
