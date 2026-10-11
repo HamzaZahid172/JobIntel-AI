@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.gmail_sync import GMAIL_SEND_SCOPE, gmail_can_send, gmail_send_approved
+from app.gmail_sync import GMAIL_SEND_SCOPE, GMAIL_SCOPE, gmail_can_send, gmail_send_approved, validate_gmail_send_upgrade
 
 
 def test_readonly_gmail_cannot_send():
@@ -38,3 +38,21 @@ def test_explicit_gmail_send_scope_builds_proper_message(monkeypatch):
         return Response()
     monkeypatch.setattr("app.gmail_sync.httpx.post", fake_post)
     assert gmail_send_approved(None,conn,"recruiter@example.com","Following up","Could I get an update?") == "gmail-message-1"
+
+
+def test_gmail_send_upgrade_requires_same_account_and_granted_permission():
+    validate_gmail_send_upgrade(
+        "Applicant@Example.com", "applicant@example.com",
+        GMAIL_SCOPE + " " + GMAIL_SEND_SCOPE,
+    )
+    with pytest.raises(ValueError, match="same Gmail account"):
+        validate_gmail_send_upgrade(
+            "applicant@example.com", "different@example.com",
+            GMAIL_SCOPE + " " + GMAIL_SEND_SCOPE,
+        )
+    with pytest.raises(ValueError, match="did not grant"):
+        validate_gmail_send_upgrade(
+            "applicant@example.com", "applicant@example.com", GMAIL_SCOPE
+        )
+    with pytest.raises(ValueError):
+        validate_gmail_send_upgrade("", "applicant@example.com", GMAIL_SEND_SCOPE)

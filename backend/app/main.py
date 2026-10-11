@@ -57,6 +57,7 @@ from .gmail_sync import (
     exchange_code,
     gmail_configured,
     gmail_can_send,
+    validate_gmail_send_upgrade,
     gmail_send_approved,
     gmail_profile,
     serialize_event,
@@ -609,6 +610,18 @@ def gmail_callback(
         .filter(GmailConnection.user_id == oauth_state.user_id)
         .first()
     )
+    if oauth_state.state.startswith("send_"):
+        if not connection:
+            raise HTTPException(400, "Connect Gmail read-only before enabling Send.")
+        try:
+            validate_gmail_send_upgrade(
+                connection.google_email,
+                profile.get("emailAddress", ""),
+                token.get("scope", ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     if not connection:
         connection = GmailConnection(
             user_id=oauth_state.user_id,

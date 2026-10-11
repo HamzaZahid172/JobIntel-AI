@@ -778,6 +778,24 @@ bindAssistedApply();
 const followupContactCache = new Map();
 const FOLLOWUP_CONTACT_TTL_MS = 15 * 60 * 1000;
 
+// Gmail read-only can discover replies; sending requires separate Google consent.
+async function startGmailSendAuthorization(){
+  if(!confirm('Allow JobIntel to request Gmail Send access? Google will ask for permission. No email will be sent by this step.'))return false;
+  try{
+    const result=await apiFetch('/api/gmail/enable-send',{method:'POST'});
+    if(!result.authorization_url || !result.authorization_url.startsWith('https://accounts.google.com/')){
+      throw new Error('Unexpected Google authorization URL.');
+    }
+    const popup=window.open(result.authorization_url,'_blank','noopener,noreferrer');
+    // Popup blockers may return null, even when the new tab was successfully opened.
+    alert('Approve Gmail Send permission in the Google tab. Then return to JobIntel and click Check Gmail Permission. Sending still requires your confirmation.');
+    return true;
+  }catch(err){
+    alert('Could not start Gmail Send authorization: '+err.message);
+    return false;
+  }
+}
+
 async function renderActionCenter(){
   const results=await Promise.all([
     apiFetch('/api/action-center'),
@@ -806,8 +824,9 @@ async function renderActionCenter(){
         '<label>Editable email draft<textarea class="followupBody" rows="9">'+esc(row.body)+'</textarea></label>'+
         '<div class="prepActions">'+
         '<button type="button" class="secondary followupCopy">Copy draft</button>'+
-        (gmail.can_send?'<button type="button" class="primary followupSend">Review & Send via Gmail</button>':
-         '<button type="button" class="secondary followupEnableGmail">Enable Gmail sending</button>')+
+        '<button type="button" class="primary followupSend"'+(gmail.can_send?'':' hidden')+'>Review & Send via Gmail</button>'+
+        '<button type="button" class="secondary followupEnableGmail"'+(gmail.can_send?' hidden':'')+'>Enable Gmail sending</button>'+
+        '<button type="button" class="secondary followupRecheckGmail"'+(gmail.can_send?' hidden':'')+'>Check Gmail Permission</button>'+
         '<button type="button" class="secondary followupSent">I sent this externally</button></div>'+
         '<small>'+(gmail.can_send?'Gmail send is authorized; no email is sent without clicking Review & Send.':'Gmail read-only remains available; enable Send separately in Settings.')+'</small>'+
         '</article>';
@@ -879,7 +898,27 @@ async function renderActionCenter(){
       }catch(err){alert('Copy unavailable; select the message text manually.');}
     };
     const enable=card.querySelector('.followupEnableGmail');
-    if(enable)enable.onclick=function(){routeTo('settings');};
+    if(enable)enable.onclick=async function(){
+      enable.disabled=true;
+      await startGmailSendAuthorization();
+      enable.disabled=false;
+    };
+    const check=card.querySelector('.followupRecheckGmail');
+    if(check)check.onclick=async function(){
+      check.disabled=true;
+      try{
+        const status=await apiFetch('/api/gmail/status');
+        if(!status.can_send)throw new Error('Gmail Send is not authorized yet. Complete consent in the Google tab first.');
+        document.querySelectorAll('.followupSend').forEach(function(button){button.hidden=false;});
+        document.querySelectorAll('.followupEnableGmail,.followupRecheckGmail').forEach(function(button){button.hidden=true;});
+        document.querySelectorAll('.followupLookupStatus').forEach(function(label){
+          label.textContent='Gmail Send enabled. Review the recipient before sending.';
+        });
+      }catch(err){
+        const status=card.querySelector('.followupLookupStatus');
+        status.textContent=err.message;
+      }finally{check.disabled=false;}
+    };
     const send=card.querySelector('.followupSend');
     if(send)send.onclick=async function(){
       const recipient=addr.value.trim();
@@ -1258,12 +1297,7 @@ async function renderSettingsPage(){
   }
   if(document.querySelector('#gmailSendPermissionButton')){
     document.querySelector('#gmailSendPermissionButton').onclick=async function(){
-      if(!confirm('Google will ask for an additional gmail.send permission. Continue?'))return;
-      try{
-        const r=await apiFetch('/api/gmail/enable-send',{method:'POST'});
-        window.open(r.authorization_url,'_blank','noopener');
-        alert('Authorize Gmail Send in the opened Google tab, then refresh Settings.');
-      }catch(err){alert('Gmail Send authorization could not start: '+err.message);}
+      await startGmailSendAuthorization();
     };
   }
   if(document.querySelector('#gmailSyncButton')){
