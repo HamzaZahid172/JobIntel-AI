@@ -80,10 +80,10 @@ async function visibleFields(page) {
       let node=e.parentElement;
       for(let depth=0;node && depth<9;depth++,node=node.parentElement){
         if(node===document.body || node.tagName==="FORM") break;
-        const text=String(node.innerText||"").replace(/\\s+/g," ").trim();
+        const text=String(node.innerText||"").replace(/\s+/g," ").trim();
         if(text.length>1000 || !text) continue;
         if(expectedFiles.some(filename=>text.toLowerCase().includes(filename.toLowerCase())) &&
-            /\\b(replace|remove|delete|attached|uploaded|ersetzen|entfernen)\\b/i.test(text)){
+            /replace|remove|delete|attached|uploaded|ersetzen|entfernen/i.test(text)){
           return text;
         }
       }
