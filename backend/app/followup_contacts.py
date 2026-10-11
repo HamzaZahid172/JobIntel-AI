@@ -140,12 +140,39 @@ def mailbox_contacts(db: Session, connection: GmailConnection, app: Application,
     company = re.sub(r"[^A-Za-z0-9ÄÖÜäöüß .&-]", "", app.company or "").strip()[:90]
     if not company or len(company) < 3:
         return []
-    params = {"q": f'in:anywhere -in:spam -in:sent newer_than:180d "{company}"',
-              "maxResults": 35, "includeSpamTrash": True}
-    listing = httpx.get(f"{GMAIL_API}/users/me/messages", headers=headers, params=params, timeout=12)
-    listing.raise_for_status()
+    queries = [f'in:anywhere -in:spam -in:sent newer_than:180d "{company}"']
+    # Saved application notifications can reveal the employer's real domain,
+    # even when a later human response does not mention the company by name.
+    recent_events = db.query(GmailEvent).filter(
+        GmailEvent.user_id == app.user_id,
+        GmailEvent.application_id == app.id,
+    ).order_by(GmailEvent.created_at.desc()).limit(15).all() if db is not None else []
+    seen_domains: set[str] = set()
+    for event in recent_events:
+        sender_address = parseaddr(event.sender or "")[1].lower()
+        domain = sender_address.rsplit("@", 1)[-1]
+        if domain and domain not in seen_domains and known_employer_domain(domain, company):
+            seen_domains.add(domain)
+            queries.append(f'in:anywhere -in:spam -in:sent newer_than:180d from:({domain})')
+        if len(queries) >= 3:
+            break
+    summaries = []
+    seen_ids = set()
+    for query in queries:
+        params = {"q": query, "maxResults": 35, "includeSpamTrash": True}
+        listing = httpx.get(f"{GMAIL_API}/users/me/messages", headers=headers, params=params, timeout=12)
+        listing.raise_for_status()
+        for row in listing.json().get("messages", [])[:35]:
+            mid = row.get("id")
+            if mid and mid not in seen_ids:
+                seen_ids.add(mid)
+                summaries.append(row)
+            if len(summaries) >= 55:
+                break
+        if len(summaries) >= 55:
+            break
     results = []
-    for summary in listing.json().get("messages", [])[:35]:
+    for summary in summaries:
         message_id = summary.get("id")
         if not message_id:
             continue
