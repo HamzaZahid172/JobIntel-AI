@@ -101,9 +101,9 @@ function uploadFieldComplete(field, documents = {}) {
   const text = String(field.attachmentText || "").toLowerCase();
   if (!filename || !text || text.length > 1000) return false;
   if (!text.includes(String(filename).toLowerCase())) return false;
-  if (/\\b(uploading|processing|upload failed|error uploading)\\b/.test(text)) return false;
+  if (/uploading|processing|upload failed|error uploading/.test(text)) return false;
   // "Replace" or "Remove" is a strong signal the upload UI now holds a file.
-  return /\\b(replace|remove|delete|attached|uploaded|ersetzen|entfernen)\\b/i.test(text);
+  return /replace|remove|delete|attached|uploaded|ersetzen|entfernen/i.test(text);
 }
 function requiredFieldsMissing(fields, documents = {}) {
   return fields.filter(field => field.required && !uploadFieldComplete(field, documents));
