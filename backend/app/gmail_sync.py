@@ -125,6 +125,19 @@ def gmail_profile(access_token: str) -> dict:
     return response.json()
 
 
+def validate_gmail_send_upgrade(
+    existing_email: str,
+    authenticated_email: str,
+    scope: str,
+) -> None:
+    """Never silently replace the linked mailbox during Send re-authorization."""
+    if not existing_email or not authenticated_email or existing_email.casefold() != authenticated_email.casefold():
+        raise ValueError("Choose the same Gmail account already connected to JobIntel.")
+    granted = set((scope or "").split())
+    if GMAIL_SEND_SCOPE not in granted:
+        raise ValueError("Google did not grant gmail.send. Approve the requested Send permission.")
+
+
 def gmail_can_send(connection: GmailConnection | None) -> bool:
     return bool(connection and GMAIL_SEND_SCOPE in (connection.scope or "").split())
 
