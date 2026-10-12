@@ -123,3 +123,29 @@ Gmail OAuth must be connected to the same account receiving the employer
 response. Automatic checks are best-effort, not instantaneous Gmail push.
 If the status indicator reports an error, open Settings → Gmail and inspect
 the backend Docker logs; CI cannot connect to your personal live Gmail.
+
+## Strict rejection evidence and revalidation (October 2026)
+
+An application submission acknowledgment, even one stating that *other candidates
+may be considered*, must never be classified as a rejection. JobIntel now
+requires explicit employer language rejecting the applicant, such as
+"We have decided not to move forward with your application" or the German
+"Absage Ihrer Bewerbung". Vague terms like "other candidates", "leider nicht"
+and "regret to inform" alone are not sufficient, and conditional hiring-process
+explanations are ignored.
+
+Older `gmail_events` rows marked Rejected by the previous classifier are
+re-fetched using Gmail read-only permissions when the background worker
+or My Applications page refresh runs. If the original email does not confirm
+rejection, the event is corrected and the application returns to its latest
+supported non-rejected state (or Applied when no other outcome exists).
+If another verified rejection exists, it remains Rejected. This does not
+delete messages or application history.
+
+When you click Rejected in Show rejected, the review displays the **exact
+original Gmail subject**, sender, received date, decision evidence where
+available, and clearly separates employer-provided reasoning from advice.
+If the email no longer supports rejection, JobIntel flags the disagreement
+rather than manufacturing an employer reason. CI uses representative Workwise
+submission and OMMAX genuine rejection samples; the connected Gmail account
+must still be verified locally.

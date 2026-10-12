@@ -1125,18 +1125,27 @@ async function renderApplicationsPage(){
     try{
       const data=await apiFetch('/api/applications/'+id+'/rejection-review');
       if(!data.reason_available){
-        box.innerHTML='<h3>Rejection review</h3><p>'+esc(data.message)+'</p>';
+        box.innerHTML='<h3>Email status needs verification</h3>'+
+          (data.source_subject?'<p><b>Original Gmail subject:</b> '+esc(data.source_subject)+'</p>':'')+
+          (data.source_sender?'<p><b>From:</b> '+esc(data.source_sender)+'</p>':'')+
+          '<p>'+esc(data.message)+'</p>';
         return;
       }
       box.innerHTML='<div class="rejectionReviewHead"><h3>Why was this application rejected? — '+esc(data.company)+'</h3>'+
         '<button class="secondary closeRejectionReview" type="button">Close</button></div>'+
         '<p><b>'+esc(data.role)+'</b> · '+esc(data.status)+'</p>'+
+        '<div class="gmailEvidenceMeta">'+
+        '<div><b>Original Gmail subject:</b> '+esc(data.source_subject||'(no subject)')+'</div>'+
+        '<div><b>From:</b> '+esc(data.source_sender||'Unknown sender')+'</div>'+
+        (data.gmail_received_at?'<div><b>Received:</b> '+esc(data.gmail_received_at)+'</div>':'')+
+        '</div>'+
         '<p><b>What the employer stated:</b> '+esc(data.employer_reason)+'</p>'+
+        (data.confirmed_rejection_excerpt?'<p><b>Rejection decision found in email:</b> '+esc(data.confirmed_rejection_excerpt)+'</p>':'')+
         (data.evidence?'<blockquote>'+esc(data.evidence)+'</blockquote>':'')+
         '<p class="rejectionReviewCaution">'+esc(data.limitations)+'</p>'+
         '<h4>Next steps for your job search</h4><ul>'+
         (data.actions||[]).map(function(item){return '<li>'+esc(item)+'</li>';}).join('')+'</ul>'+
-        '<small>Evidence: Gmail · '+esc(data.source_subject)+(data.gmail_received_at?' · '+esc(data.gmail_received_at):'')+'</small>';
+        '<small>Evidence source: original Gmail message (verify the subject above in your inbox)</small>';
       const close=box.querySelector('.closeRejectionReview');
       if(close)close.onclick=function(){box.classList.add('hidden');};
     }catch(err){

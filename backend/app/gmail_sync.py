@@ -192,18 +192,48 @@ def _tokens(value: str) -> set[str]:
     return {x for x in _normalise(value).split() if len(x) >= 3 and x not in stop}
 
 
+# Only an explicit rejection decision can automatically reject an application.
+# "other candidates", "leider nicht", "regret to inform" and the like alone
+# are not evidence of an actual rejection.
+_REJECTION_PATTERNS = (
+    r"\b(?:we|our team)\s+(?:have\s+)?(?:decided|chosen)\s+not\s+to\s+(?:move\s+forward|proceed|progress)\b",
+    r"\b(?:we|our team)\s+(?:will\s+not|won't|cannot|can't)\s+(?:be\s+)?(?:moving\s+forward|proceed(?:ing)?|progress(?:ing)?)\b",
+    r"\b(?:we|our team)\s+(?:have\s+)?(?:decided|chosen)\s+to\s+(?:move\s+forward|proceed)\s+with\s+other\s+(?:candidates|applicants)\b",
+    r"\byour\s+application\s+(?:was|has\s+been|is)\s+(?:not\s+successful|unsuccessful|not\s+selected|rejected|declined)\b",
+    r"\byou\s+(?:were\s+not|have\s+not\s+been|are\s+not)\s+selected\s+for\s+(?:this|the|our)\s+(?:role|position|job)\b",
+    r"\b(?:we|our team)\s+(?:are\s+)?(?:unable|not\s+able)\s+to\s+offer\s+you\s+(?:this|the|a)\s+(?:role|position|job)\b",
+    r"\b(?:we|our team)\s+(?:regretfully|unfortunately)\s+(?:must\s+)?(?:decline|reject)\s+your\s+application\b",
+    r"\babsage\s+(?:ihrer|deiner)\s+bewerbung\b",
+    r"\bwir\s+können\s+(?:sie|dich)\s+leider\s+nicht\s+berücksichtigen\b",
+    r"\bwir\s+haben\s+uns\s+(?:leider\s+)?für\s+andere\s+bewerber(?:innen)?\s+entschieden\b",
+    r"\b(?:leider\s+müssen\s+wir\s+(?:ihnen|dir)\s+absagen|wir\s+müssen\s+(?:ihnen|dir)\s+leider\s+absagen)\b",
+)
+_REJECTION_REGEX = tuple(re.compile(pattern, re.I) for pattern in _REJECTION_PATTERNS)
+
+
+def rejection_evidence(subject: str, body: str) -> str | None:
+    """Return an actual reject decision excerpt, not a general hiring phrase."""
+    original = f"{subject or ''} {body or ''}"
+    normalized = original.replace("’", "'").replace("‘", "'")
+    for pattern in _REJECTION_REGEX:
+        match = pattern.search(normalized)
+        if not match:
+            continue
+        clause = normalized[max(0, match.start() - 90):match.start()]
+        boundary = max(clause.rfind("."), clause.rfind("!"), clause.rfind("?"), clause.rfind("\n"))
+        clause = clause[boundary + 1:].strip().lower()
+        # A hypothetical description is not a decision about the applicant.
+        if re.search(r"\b(?:if|when|whether|unless|should)\b", clause):
+            continue
+        return original[max(0, match.start() - 65):min(len(original), match.end() + 120)].strip()
+    return None
+
+
 def classify_message(subject: str, snippet: str) -> str | None:
-    """Conservative classification: generic words never trigger a rejection."""
+    """Conservative classification requiring an explicit rejection decision."""
     value = f"{subject} {snippet}".lower().replace("’", "'").replace("‘", "'")
-    rejection = (
-        "regret to inform", "not moving forward", "not proceed with your",
-        "other candidates", "other applicants", "application was unsuccessful",
-        "will not be moving", "we have decided not to",
-        "won't be moving forward", "will not be moving forward",
-        "not selected", "unable to offer you", "won't be proceeding",
-        "will not proceed", "nicht berücksichtigen", "leider absagen",
-        "leider nicht", "absage ihrer bewerbung", "bewerbung leider",
-    )
+    if rejection_evidence(subject, snippet):
+        return "Rejected"
     offers = ("job offer", "offer letter", "pleased to offer you", "employment offer")
     interviews = (
         "invite you to an interview", "invitation to interview",
@@ -220,9 +250,9 @@ def classify_message(subject: str, snippet: str) -> str | None:
         "application received", "thank you for applying", "thanks for applying",
         "we received your application", "application confirmation",
         "eingangsbestätigung ihrer bewerbung",
+        "application has been successfully submitted",
+        "your application was submitted successfully",
     )
-    if any(phrase in value for phrase in rejection):
-        return "Rejected"
     if any(phrase in value for phrase in offers):
         return "Offer"
     if any(phrase in value for phrase in interviews):
@@ -439,6 +469,19 @@ def _sync_gmail_impl(
     message_ids: list[str] = []
     seen_ids: set[str] = set()
     max_results = min(max(int(max_results), 1), 500)
+    # Always recheck previously stored rejections against the original full
+    # message. Older classifier versions could incorrectly label confirmations.
+    previous_rejections = db.query(GmailEvent).filter(
+        GmailEvent.user_id == user_id,
+        GmailEvent.outcome == "Rejected",
+    ).order_by(GmailEvent.received_at.desc().nullslast()).limit(100).all()
+    for signal in previous_rejections:
+        if only_app_id is not None and signal.application_id != only_app_id:
+            continue
+        if signal.gmail_message_id not in seen_ids:
+            seen_ids.add(signal.gmail_message_id)
+            message_ids.append(signal.gmail_message_id)
+
     # High-priority employer search: recent application outcomes must not be
     # buried behind a 300-message general inbox limit.
     targeted_listed = 0
@@ -510,6 +553,9 @@ def _sync_gmail_impl(
 
     scanned = matched = updated = events_created = 0
     classified_messages = unmatched_messages = previously_processed = 0
+    revised_rejections = 0
+    invalidated_apps: set[int] = set()
+    invalidated_subjects: dict[int, set[str]] = {}
     outcomes: dict[str, int] = {}
 
     for message_id in message_ids:
@@ -521,14 +567,45 @@ def _sync_gmail_impl(
         ).first()
         if existing:
             previously_processed += 1
-            if existing.application_id and existing.outcome:
-                linked = next(
-                    (app for app in applications if app.id == existing.application_id),
-                    None,
+            linked = next(
+                (app for app in applications if app.id == existing.application_id),
+                None,
+            )
+            if only_app_id is not None and (not linked or linked.id != only_app_id):
+                continue
+            if existing.outcome == "Rejected":
+                # Revalidate legacy decisions from the actual Gmail body,
+                # never trust the cached classifier result as proof forever.
+                response = httpx.get(
+                    f"{GMAIL_API}/users/me/messages/{message_id}",
+                    headers=headers,
+                    params=[("format", "full"), ("metadataHeaders", "Subject"),
+                            ("metadataHeaders", "From"), ("metadataHeaders", "Date")],
+                    timeout=20,
                 )
-                if linked and (only_app_id is None or linked.id == only_app_id):
-                    if _apply_outcome(linked, existing.outcome):
-                        updated += 1
+                response.raise_for_status()
+                original = response.json()
+                meta = _gmail_headers(original)
+                actual_subject = meta.get("subject", existing.subject)
+                actual_sender = meta.get("from", existing.sender)
+                actual_body = _message_body_text(original) or original.get("snippet", "")
+                new_outcome = classify_message(actual_subject, actual_body)
+                candidate = match_application(
+                    applications, actual_subject, actual_sender, actual_body[:2000]
+                )
+                valid_match = linked and candidate and candidate.id == linked.id
+                if new_outcome != "Rejected" or not valid_match:
+                    existing.outcome = new_outcome if valid_match and new_outcome else "NeedsReview"
+                    existing.subject = actual_subject[:500]
+                    existing.sender = actual_sender[:500]
+                    revised_rejections += 1
+                    if linked:
+                        invalidated_apps.add(linked.id)
+                        invalidated_subjects.setdefault(linked.id, set()).add(actual_subject)
+                    continue
+            if linked and existing.outcome:
+                if _apply_outcome(linked, existing.outcome):
+                    updated += 1
             continue
 
         response = httpx.get(
@@ -595,6 +672,35 @@ def _sync_gmail_impl(
         if signal and signal not in (app.notes or ""):
             app.notes = ((app.notes or "").rstrip() + "\n" + signal).strip()
 
+    # Recalculate ONLY the applications whose cached "Rejected" event has
+    # just failed revalidation. Never erase a different genuine rejection.
+    for app_id in invalidated_apps:
+        linked = next((app for app in applications if app.id == app_id), None)
+        if not linked or linked.status != "Rejected":
+            continue
+        signals = db.query(GmailEvent).filter(
+            GmailEvent.user_id == user_id,
+            GmailEvent.application_id == app_id,
+        ).order_by(GmailEvent.received_at.desc().nullslast(), GmailEvent.created_at.desc()).all()
+        if any(signal.outcome == "Rejected" for signal in signals):
+            continue
+        for candidate in signals:
+            if candidate.outcome in {"Offer", "Interview", "Screening", "Applied"}:
+                linked.status = candidate.outcome
+                break
+        else:
+            linked.status = "Applied"
+        # Remove only invalidated auto-generated rejection note lines.
+        invalid_subjects = invalidated_subjects.get(app_id, set())
+        linked.notes = "\n".join(
+            line for line in (linked.notes or "").splitlines()
+            if not (
+                line.startswith("Gmail signal: Rejected")
+                and any(subject in line for subject in invalid_subjects)
+            )
+        )
+        updated += 1
+
     connection.last_synced_at = datetime.utcnow()
     db.commit()
 
@@ -605,6 +711,7 @@ def _sync_gmail_impl(
         "classified": classified_messages,
         "unmatched": unmatched_messages,
         "already_processed": previously_processed,
+        "corrected_false_rejections": revised_rejections,
         "gmail_account": connection.google_email,
         "targeted_only": targeted_only or only_app_id is not None,
         "matched": matched,
