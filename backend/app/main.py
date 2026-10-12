@@ -87,6 +87,7 @@ from .schemas import (
     ApplicationCreate,
     ApplicationOut,
     CandidateProfileUpdate,
+    CoverLetterDraft,
     ApprovedFollowupSend,
     ApplicationPackageAnswerUpdate,
     ApplicationPreparationRequest,
@@ -1292,6 +1293,7 @@ def serialize_application_package(item: ApplicationPackage) -> dict:
         "status": item.status,
         "match_score": item.match_score,
         "cover_letter_generator": item.cover_letter_generator,
+        "cover_letter_text": item.cover_letter_text,
         "package": payload,
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
@@ -1362,6 +1364,21 @@ async def prepare_application(
     db.refresh(item)
 
     return serialize_application_package(item)
+
+
+@app.post("/api/jobs/{job_id}/cover-letter-render")
+def render_approved_cover_letter(
+    job_id: int, payload: CoverLetterDraft,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    content = build_cover_letter_docx(payload.text, user, job)
+    filename = safe_filename(f"{user.display_name}_{job.company}_Cover_Letter") + ".docx"
+    return {"name": filename,
+            "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "base64": base64.b64encode(content).decode("ascii")}
 
 
 @app.get("/api/application-packages")
@@ -1690,6 +1707,8 @@ async def upload_candidate_document(
     file: UploadFile = File(...), kind: str = "cv", role_family: str = "general",
     user: User = Depends(get_current_user), db: Session = Depends(get_db)
 ):
+    if kind == "cv":
+        raise HTTPException(400, "Use the CV upload flow to save and analyze a CV.")
     raw = await file.read(8 * 1024 * 1024 + 1)
     row = store_document(db, user.id, file.filename or "document.pdf", raw, kind, role_family)
     return public_document(row)
@@ -1734,6 +1753,7 @@ def candidate_document_content(
 @app.post("/api/cv/upload")
 async def upload_cv(
     file: UploadFile = File(...),
+    role_family: str = "general",
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -1760,7 +1780,8 @@ async def upload_cv(
     db.refresh(profile)
     # Preserve the exact source bytes as well as extracted CV text.
     # Users who uploaded before this release need to upload once more.
-    store_document(db, user.id, file.filename or "cv.pdf", raw, "cv", "general")
+    store_document(db, user.id, file.filename or "cv.pdf", raw, "cv",
+                   role_family, cv_profile_id=profile.id)
     rescored = rescore_jobs(db, profile)
     return {
         "uploaded": True,
