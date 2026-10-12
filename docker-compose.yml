@@ -59,6 +59,8 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_GMAIL_REDIRECT_URI: ${GOOGLE_GMAIL_REDIRECT_URI:-http://localhost:8100/api/gmail/callback}
+      GOOGLE_LOGIN_REDIRECT_URI: ${GOOGLE_LOGIN_REDIRECT_URI:-http://localhost:8100/api/auth/google/callback}
+      GOOGLE_LOGIN_FRONTEND_ORIGIN: ${GOOGLE_LOGIN_FRONTEND_ORIGIN:-http://localhost:3100}
     volumes:
       - documents_data:/data/documents
     depends_on:
