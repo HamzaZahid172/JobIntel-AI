@@ -13,6 +13,8 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
     score = float((match or {}).get("overall_score") or 0)
     role_score = float((match or {}).get("role_score") or 0)
     blockers = list((match or {}).get("hard_blockers") or [])
+    eligibility=(match or {}).get('eligibility') or {}
+    uncertainty=list(eligibility.get('needs_confirmation') or [])
     posted_at = getattr(job, "posted_at", None)
     age_days = max((today - posted_at.date()).days, 0) if posted_at else None
     if age_days is None:
@@ -64,6 +66,10 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
         f"Posted: {age_days} days ago" if age_days is not None else "Posting date not supplied",
         "Direct employer ATS source" if direct else "External job feed (verify employer listing)",
     ]
+    if uncertainty:
+        reasons.append("Eligibility to verify: " + "; ".join(uncertainty[:3]))
+        if decision == "Apply Now":
+            decision = "Review"
     if blockers:
         reasons.append("Blockers: " + "; ".join(blockers))
     if off_target:
@@ -77,6 +83,7 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
         "direct_employer": direct,
         "reasons": reasons,
         "blockers": blockers,
+        "eligibility": eligibility,
         "disclaimer": "Heuristic priority, not the probability of receiving an offer.",
     }
 
