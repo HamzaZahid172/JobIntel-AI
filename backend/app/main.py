@@ -20,6 +20,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .google_login import begin_google_login, complete_google_oauth, exchange_ticket, popup_result_page, configured as google_login_configured
 from .interview_practice import question_bank, answer_feedback
 from .conversion_analytics import application_analytics
 from .ats_simulator import ats_review as evaluate_cv_ats
@@ -82,6 +83,7 @@ from .models import (
     GmailConnection,
     GmailEvent,
     GmailOAuthState,
+    GoogleLoginIdentity,
     Job,
     LiveJob,
     User,
@@ -91,6 +93,7 @@ from .schemas import (
     ApplicationOut,
     CandidateProfileUpdate,
     CoverLetterDraft,
+    GoogleLoginExchange,
     ApprovedFollowupSend,
     ApplicationPackageAnswerUpdate,
     ApplicationPreparationRequest,
@@ -508,6 +511,54 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
     claim_legacy_workspace(db, user)
     token = create_session(db, user)
     return {"token": token, "user": user_payload(user)}
+
+
+@app.get("/api/auth/google/status")
+def google_signin_status(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    identity=db.query(GoogleLoginIdentity).filter(
+        GoogleLoginIdentity.user_id==user.id
+    ).first()
+    return {"configured":google_login_configured(),"linked":bool(identity),
+            "google_email":identity.google_email if identity else None}
+
+
+@app.post("/api/auth/google/start")
+def google_signin_start(db: Session = Depends(get_db)):
+    return {"authorization_url":begin_google_login(db)}
+
+
+@app.post("/api/auth/google/link")
+def google_signin_link(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    return {"authorization_url":begin_google_login(db,link_user_id=user.id)}
+
+
+@app.get("/api/auth/google/callback", response_class=HTMLResponse)
+def google_signin_callback(
+    state: str | None = None, code: str | None = None,
+    error: str | None = None, db: Session = Depends(get_db)
+):
+    if error or not code or not state:
+        return popup_result_page({"error":"Google Sign-In was cancelled or missing authorization."})
+    try:
+        return popup_result_page(complete_google_oauth(db,state,code))
+    except HTTPException as exc:
+        return popup_result_page({"error":str(exc.detail)})
+    except Exception:
+        logger.exception("Google Sign-In callback failed")
+        return popup_result_page({"error":"Google Sign-In failed. Please try again."})
+
+
+@app.post("/api/auth/google/exchange")
+def google_signin_exchange(
+    payload: GoogleLoginExchange, db: Session = Depends(get_db)
+):
+    user=exchange_ticket(db,payload.ticket)
+    token=create_session(db,user)
+    return {"token":token,"user":user_payload(user)}
 
 
 @app.post("/api/auth/login")
