@@ -187,3 +187,6 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .dashboardMetricBad b{color:#a92c35}
 #refreshDashboard{white-space:nowrap}
 @media(max-width:850px){.headerActions{flex-wrap:wrap}.accountMenu{max-width:min(270px,85vw)}}
+
+/* Keep a readable single-column summary on narrow screens. */
+@media(max-width:760px){.metrics{grid-template-columns:1fr}.headerActions{gap:6px}#refreshDashboard{font-size:12px}}
