@@ -80,3 +80,25 @@ def test_match_layer_rejects_german_b2_when_cv_only_has_a2():
     assert result["language_score"] < 50
     assert result["hard_blockers"]
     assert result["eligible_for_preparation"] is False
+
+
+def test_working_student_eligibility_requires_verification_not_invented_status():
+    from app.eligibility import assess_eligibility
+    result=assess_eligibility("Python FastAPI experience", "Werkstudent Python Engineer",
+        "Enrolled university students preferred. Existing work authorization required.", "Berlin")
+    assert result["employment_type"]=="Working Student"
+    assert result["status"]=="Review needed"
+    assert result["needs_confirmation"]
+
+def test_manual_only_qa_and_german_b2_are_blockers():
+    from app.eligibility import assess_eligibility
+    result=assess_eligibility("Languages: English C1, German A2. Python Cypress",
+        "Manual Tester", "German B2 required.", "Berlin")
+    assert result["status"]=="Blocked"
+    assert len(result["hard_blockers"])==2
+
+def test_eligibility_is_visible_alongside_matching():
+    result=build_match_report("Python FastAPI, German A2", "Backend Engineer",
+        "Python FastAPI. German C1 required.", "Berlin")
+    assert result["eligibility"]["status"]=="Blocked"
+    assert any("German" in item for item in result["hard_blockers"])

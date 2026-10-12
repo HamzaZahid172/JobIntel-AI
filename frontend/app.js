@@ -529,6 +529,7 @@ function jobCard(job, compact){
     '<div class="scoreBadge">' + score + '<small>match</small></div></div>' +
     '<div class="tagRow">' + skills.map(function(s){return '<span class="tag">' + esc(s) + '</span>';}).join('') + '</div>' +
     (job.opportunity ? '<p class="opportunityLine"><b>Opportunity '+Math.round(job.opportunity.score)+'/100</b> · '+esc(job.opportunity.decision)+' · '+esc(job.opportunity.track)+(job.opportunity.age_days!=null?' · '+job.opportunity.age_days+'d old':'')+'</p>' : '') +
+    (job.opportunity&&job.opportunity.eligibility?'<p class="eligibilityLine"><b>Eligibility:</b> '+esc(job.opportunity.eligibility.status)+' · '+esc(job.opportunity.eligibility.seniority)+' · '+esc(job.opportunity.eligibility.employment_type)+'</p>'+((job.opportunity.eligibility.needs_confirmation||[]).length?'<p class="muted">Verify: '+job.opportunity.eligibility.needs_confirmation.map(esc).join('; ')+'</p>':''):'') +
     breakdownHtml +
     (!compact && missing.length ? '<p class="missingLine"><b>Missing:</b> ' + missing.map(esc).join(', ') + '</p>' : '') +
     (!compact && job.hard_blockers && job.hard_blockers.length ? '<p class="blockerLine"><b>Review:</b> ' + job.hard_blockers.map(esc).join(' ') + '</p>' : '') +
