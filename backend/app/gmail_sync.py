@@ -192,18 +192,48 @@ def _tokens(value: str) -> set[str]:
     return {x for x in _normalise(value).split() if len(x) >= 3 and x not in stop}
 
 
+# Only an explicit rejection decision can automatically reject an application.
+# "other candidates", "leider nicht", "regret to inform" and the like alone
+# are not evidence of an actual rejection.
+_REJECTION_PATTERNS = (
+    r"\b(?:we|our team)\s+(?:have\s+)?(?:decided|chosen)\s+not\s+to\s+(?:move\s+forward|proceed|progress)\b",
+    r"\b(?:we|our team)\s+(?:will\s+not|won't|cannot|can't)\s+(?:be\s+)?(?:moving\s+forward|proceed(?:ing)?|progress(?:ing)?)\b",
+    r"\b(?:we|our team)\s+(?:have\s+)?(?:decided|chosen)\s+to\s+(?:move\s+forward|proceed)\s+with\s+other\s+(?:candidates|applicants)\b",
+    r"\byour\s+application\s+(?:was|has\s+been|is)\s+(?:not\s+successful|unsuccessful|not\s+selected|rejected|declined)\b",
+    r"\byou\s+(?:were\s+not|have\s+not\s+been|are\s+not)\s+selected\s+for\s+(?:this|the|our)\s+(?:role|position|job)\b",
+    r"\b(?:we|our team)\s+(?:are\s+)?(?:unable|not\s+able)\s+to\s+offer\s+you\s+(?:this|the|a)\s+(?:role|position|job)\b",
+    r"\b(?:we|our team)\s+(?:regretfully|unfortunately)\s+(?:must\s+)?(?:decline|reject)\s+your\s+application\b",
+    r"\babsage\s+(?:ihrer|deiner)\s+bewerbung\b",
+    r"\bwir\s+können\s+(?:sie|dich)\s+leider\s+nicht\s+berücksichtigen\b",
+    r"\bwir\s+haben\s+uns\s+(?:leider\s+)?für\s+andere\s+bewerber(?:innen)?\s+entschieden\b",
+    r"\b(?:leider\s+müssen\s+wir\s+(?:ihnen|dir)\s+absagen|wir\s+müssen\s+(?:ihnen|dir)\s+leider\s+absagen)\b",
+)
+_REJECTION_REGEX = tuple(re.compile(pattern, re.I) for pattern in _REJECTION_PATTERNS)
+
+
+def rejection_evidence(subject: str, body: str) -> str | None:
+    """Return an actual reject decision excerpt, not a general hiring phrase."""
+    original = f"{subject or ''} {body or ''}"
+    normalized = original.replace("’", "'").replace("‘", "'")
+    for pattern in _REJECTION_REGEX:
+        match = pattern.search(normalized)
+        if not match:
+            continue
+        clause = normalized[max(0, match.start() - 90):match.start()]
+        boundary = max(clause.rfind("."), clause.rfind("!"), clause.rfind("?"), clause.rfind("\n"))
+        clause = clause[boundary + 1:].strip().lower()
+        # A hypothetical description is not a decision about the applicant.
+        if re.search(r"\b(?:if|when|whether|unless|should)\b", clause):
+            continue
+        return original[max(0, match.start() - 65):min(len(original), match.end() + 120)].strip()
+    return None
+
+
 def classify_message(subject: str, snippet: str) -> str | None:
-    """Conservative classification: generic words never trigger a rejection."""
+    """Conservative classification requiring an explicit rejection decision."""
     value = f"{subject} {snippet}".lower().replace("’", "'").replace("‘", "'")
-    rejection = (
-        "regret to inform", "not moving forward", "not proceed with your",
-        "other candidates", "other applicants", "application was unsuccessful",
-        "will not be moving", "we have decided not to",
-        "won't be moving forward", "will not be moving forward",
-        "not selected", "unable to offer you", "won't be proceeding",
-        "will not proceed", "nicht berücksichtigen", "leider absagen",
-        "leider nicht", "absage ihrer bewerbung", "bewerbung leider",
-    )
+    if rejection_evidence(subject, snippet):
+        return "Rejected"
     offers = ("job offer", "offer letter", "pleased to offer you", "employment offer")
     interviews = (
         "invite you to an interview", "invitation to interview",
@@ -220,9 +250,9 @@ def classify_message(subject: str, snippet: str) -> str | None:
         "application received", "thank you for applying", "thanks for applying",
         "we received your application", "application confirmation",
         "eingangsbestätigung ihrer bewerbung",
+        "application has been successfully submitted",
+        "your application was submitted successfully",
     )
-    if any(phrase in value for phrase in rejection):
-        return "Rejected"
     if any(phrase in value for phrase in offers):
         return "Offer"
     if any(phrase in value for phrase in interviews):
