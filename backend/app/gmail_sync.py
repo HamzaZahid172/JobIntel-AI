@@ -469,6 +469,19 @@ def _sync_gmail_impl(
     message_ids: list[str] = []
     seen_ids: set[str] = set()
     max_results = min(max(int(max_results), 1), 500)
+    # Always recheck previously stored rejections against the original full
+    # message. Older classifier versions could incorrectly label confirmations.
+    previous_rejections = db.query(GmailEvent).filter(
+        GmailEvent.user_id == user_id,
+        GmailEvent.outcome == "Rejected",
+    ).order_by(GmailEvent.received_at.desc().nullslast()).limit(100).all()
+    for signal in previous_rejections:
+        if only_app_id is not None and signal.application_id != only_app_id:
+            continue
+        if signal.gmail_message_id not in seen_ids:
+            seen_ids.add(signal.gmail_message_id)
+            message_ids.append(signal.gmail_message_id)
+
     # High-priority employer search: recent application outcomes must not be
     # buried behind a 300-message general inbox limit.
     targeted_listed = 0
@@ -540,6 +553,8 @@ def _sync_gmail_impl(
 
     scanned = matched = updated = events_created = 0
     classified_messages = unmatched_messages = previously_processed = 0
+    revised_rejections = 0
+    invalidated_apps: set[int] = set()
     outcomes: dict[str, int] = {}
 
     for message_id in message_ids:
@@ -551,14 +566,43 @@ def _sync_gmail_impl(
         ).first()
         if existing:
             previously_processed += 1
-            if existing.application_id and existing.outcome:
-                linked = next(
-                    (app for app in applications if app.id == existing.application_id),
-                    None,
+            linked = next(
+                (app for app in applications if app.id == existing.application_id),
+                None,
+            )
+            if only_app_id is not None and (not linked or linked.id != only_app_id):
+                continue
+            if existing.outcome == "Rejected":
+                # Revalidate legacy decisions from the actual Gmail body,
+                # never trust the cached classifier result as proof forever.
+                response = httpx.get(
+                    f"{GMAIL_API}/users/me/messages/{message_id}",
+                    headers=headers,
+                    params={"format": "full"},
+                    timeout=20,
                 )
-                if linked and (only_app_id is None or linked.id == only_app_id):
-                    if _apply_outcome(linked, existing.outcome):
-                        updated += 1
+                response.raise_for_status()
+                original = response.json()
+                meta = _gmail_headers(original)
+                actual_subject = meta.get("subject", existing.subject)
+                actual_sender = meta.get("from", existing.sender)
+                actual_body = _message_body_text(original) or original.get("snippet", "")
+                new_outcome = classify_message(actual_subject, actual_body)
+                candidate = match_application(
+                    applications, actual_subject, actual_sender, actual_body[:2000]
+                )
+                valid_match = linked and candidate and candidate.id == linked.id
+                if new_outcome != "Rejected" or not valid_match:
+                    existing.outcome = new_outcome if valid_match and new_outcome else "NeedsReview"
+                    existing.subject = actual_subject[:500]
+                    existing.sender = actual_sender[:500]
+                    revised_rejections += 1
+                    if linked:
+                        invalidated_apps.add(linked.id)
+                    continue
+            if linked and existing.outcome:
+                if _apply_outcome(linked, existing.outcome):
+                    updated += 1
             continue
 
         response = httpx.get(
@@ -625,6 +669,37 @@ def _sync_gmail_impl(
         if signal and signal not in (app.notes or ""):
             app.notes = ((app.notes or "").rstrip() + "\n" + signal).strip()
 
+    # Recalculate ONLY the applications whose cached "Rejected" event has
+    # just failed revalidation. Never erase a different genuine rejection.
+    for app_id in invalidated_apps:
+        linked = next((app for app in applications if app.id == app_id), None)
+        if not linked or linked.status != "Rejected":
+            continue
+        signals = db.query(GmailEvent).filter(
+            GmailEvent.user_id == user_id,
+            GmailEvent.application_id == app_id,
+        ).order_by(GmailEvent.received_at.desc().nullslast(), GmailEvent.created_at.desc()).all()
+        if any(signal.outcome == "Rejected" for signal in signals):
+            continue
+        for candidate in signals:
+            if candidate.outcome in {"Offer", "Interview", "Screening", "Applied"}:
+                linked.status = candidate.outcome
+                break
+        else:
+            linked.status = "Applied"
+        # Remove only invalidated auto-generated rejection note lines.
+        invalid_subjects = {
+            signal.subject for signal in signals if signal.outcome == "NeedsReview"
+        }
+        linked.notes = "\n".join(
+            line for line in (linked.notes or "").splitlines()
+            if not (
+                line.startswith("Gmail signal: Rejected")
+                and any(subject in line for subject in invalid_subjects)
+            )
+        )
+        updated += 1
+
     connection.last_synced_at = datetime.utcnow()
     db.commit()
 
@@ -635,6 +710,7 @@ def _sync_gmail_impl(
         "classified": classified_messages,
         "unmatched": unmatched_messages,
         "already_processed": previously_processed,
+        "corrected_false_rejections": revised_rejections,
         "gmail_account": connection.google_email,
         "targeted_only": targeted_only or only_app_id is not None,
         "matched": matched,
