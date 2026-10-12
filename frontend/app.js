@@ -1071,13 +1071,44 @@ async function renderApplicationsPage(){
   }).filter(Boolean)));
   const banner = recentCompanies.length
     ? '<div class="card gmailRejectionNotice"><b>Recent rejection detected: '+esc(recentCompanies.join(', '))+
-      '</b><p>Gmail confirmed this outcome. The application is kept in your history. Select Show rejected to review it.</p></div>'
+      '</b><p>Gmail confirmed this outcome. The application is kept in your history. Select Show rejected to review it.</p>'+
+      '<button type="button" class="secondary reviewRejection" data-app-id="'+esc(recentSignals[0].application_id)+'">Review latest rejection →</button></div>'
     : '';
   page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + (showRejectedApplications?' tracked applications':' active applications') + '</b><small>'+rejected.length+' rejected application(s) retained for history and analytics.</small></div><div><button id="toggleRejectedApps" class="secondary">'+(showRejectedApplications?'Hide rejected':'Show rejected ('+rejected.length+')')+'</button> <button id="syncGmailFromApps" class="secondary">Sync Gmail</button> <button id="pageAddApp" class="primary">＋ Add application</button></div></div>' +
     banner +
     '<div class="card tableCard"><table class="dataTable"><thead><tr><th>Role</th><th>Company</th><th>Applied</th><th>Match</th><th>Status</th><th>Gmail signal</th><th>Link</th></tr></thead><tbody>' +
-    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b></td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
-    '</tbody></table></div>';
+    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b>'+(a.status==='Rejected'?'<button type="button" class="secondary reviewRejection" data-app-id="'+esc(a.id)+'">Review rejection</button>':'')+'</td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
+    '</tbody></table></div><section id="rejectionReviewResult" class="card rejectionReviewPanel hidden" aria-live="polite"></section>';
+  async function reviewRejection(id){
+    const box=document.querySelector('#rejectionReviewResult');
+    if(!box)return;
+    box.classList.remove('hidden');
+    box.innerHTML='<b>Loading original employer rejection...</b>';
+    box.scrollIntoView({behavior:'smooth',block:'nearest'});
+    try{
+      const data=await apiFetch('/api/applications/'+id+'/rejection-review');
+      if(!data.reason_available){
+        box.innerHTML='<h3>Rejection review</h3><p>'+esc(data.message)+'</p>';
+        return;
+      }
+      box.innerHTML='<div class="rejectionReviewHead"><h3>Why was this application rejected? — '+esc(data.company)+'</h3>'+
+        '<button class="secondary closeRejectionReview" type="button">Close</button></div>'+
+        '<p><b>'+esc(data.role)+'</b> · '+esc(data.status)+'</p>'+
+        '<p><b>What the employer stated:</b> '+esc(data.employer_reason)+'</p>'+
+        (data.evidence?'<blockquote>'+esc(data.evidence)+'</blockquote>':'')+
+        '<p class="rejectionReviewCaution">'+esc(data.limitations)+'</p>'+
+        '<h4>Next steps for your job search</h4><ul>'+
+        (data.actions||[]).map(function(item){return '<li>'+esc(item)+'</li>';}).join('')+'</ul>'+
+        '<small>Evidence: Gmail · '+esc(data.source_subject)+(data.gmail_received_at?' · '+esc(data.gmail_received_at):'')+'</small>';
+      const close=box.querySelector('.closeRejectionReview');
+      if(close)close.onclick=function(){box.classList.add('hidden');};
+    }catch(err){
+      box.innerHTML='<h3>Rejection review unavailable</h3><p>'+esc(err.message)+'</p>';
+    }
+  }
+  document.querySelectorAll('.reviewRejection').forEach(function(button){
+    button.onclick=function(){reviewRejection(Number(button.dataset.appId));};
+  });
   document.querySelector('#pageAddApp').onclick=function(){openApplicationModal(null);};
   document.querySelector('#toggleRejectedApps').onclick=async function(){
     showRejectedApplications=!showRejectedApplications;

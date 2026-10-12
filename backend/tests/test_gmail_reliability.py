@@ -81,7 +81,10 @@ def test_trash_search_paginates_and_updates_only_matching_application(monkeypatc
         assert result["listed"] == 2
         assert result["updated"] == 1
         assert app.status == "Rejected"
-        assert len([call for call in calls if call[0].endswith("/messages")]) == 2
+        list_calls = [call for call in calls if call[0].endswith("/messages")]
+        assert len(list_calls) == 3  # two general pages plus employer-specific search
+        assert sum("pageToken" in params for _, params in list_calls) == 1
+        assert sum('"Example GmbH"' in params["q"] for _, params in list_calls) == 1
         # Second run must not duplicate the already saved Gmail event.
         result2 = sync_gmail(db, 1)
         assert result2["updated"] == 0

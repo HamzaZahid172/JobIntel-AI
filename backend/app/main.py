@@ -51,6 +51,8 @@ from .intelligence import (
     rank_cv_skills,
 )
 from .match_layer import build_match_report
+from .rejection_insights import rejection_review
+from .gmail_sync import GMAIL_API, _message_body_text, ensure_access_token
 from .gmail_worker import start_gmail_worker
 from .gmail_sync import (
     build_authorization_url,
@@ -1463,6 +1465,58 @@ def update_application(
     db.commit()
     db.refresh(item)
     return item
+
+
+@app.get("/api/applications/{application_id}/rejection-review")
+def review_application_rejection(
+    application_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_item = db.query(Application).filter(
+        Application.id == application_id, Application.user_id == user.id
+    ).first()
+    if not app_item:
+        raise HTTPException(404, "Application not found.")
+    event = db.query(GmailEvent).filter(
+        GmailEvent.user_id == user.id,
+        GmailEvent.application_id == app_item.id,
+        GmailEvent.outcome == "Rejected",
+    ).order_by(GmailEvent.received_at.desc().nullslast(), GmailEvent.created_at.desc()).first()
+    if not event:
+        return {
+            "application_id": app_item.id,
+            "company": app_item.company,
+            "status": app_item.status,
+            "reason_available": False,
+            "message": "No matched Gmail rejection is recorded yet. Sync Gmail and verify the employer email was matched to this application.",
+        }
+    connection = db.query(GmailConnection).filter(GmailConnection.user_id == user.id).first()
+    if not connection:
+        raise HTTPException(409, "Connect Gmail to review the original rejection.")
+    try:
+        token = ensure_access_token(db, connection)
+        response = httpx.get(
+            f"{GMAIL_API}/users/me/messages/{event.gmail_message_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            params={"format": "full"},
+            timeout=20,
+        )
+        response.raise_for_status()
+    except (httpx.HTTPError, RuntimeError) as exc:
+        logger.warning("Could not retrieve rejection review email for user %s", user.id)
+        raise HTTPException(502, "Could not read the original Gmail rejection. Verify Gmail connection and try again.") from exc
+    body = _message_body_text(response.json()) or event.snippet or ""
+    review = rejection_review(body, event.subject)
+    return {
+        "application_id": app_item.id,
+        "company": app_item.company,
+        "role": app_item.role,
+        "status": app_item.status,
+        "reason_available": True,
+        "gmail_received_at": event.received_at.isoformat() if event.received_at else None,
+        **review,
+    }
 
 
 @app.get("/api/cv")
