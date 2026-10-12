@@ -194,6 +194,8 @@ async function fill() {
     [session.profile.firstName,session.profile.lastName].filter(Boolean).join(" ")};
   for(const field of fields){
     if(uploadFieldComplete(field,session.docs))continue;
+    // Do not overwrite answers manually entered by the candidate or a resume parser.
+    if(field.filled && field.type!=="file")continue;
     const locator=page.locator("input,textarea,select").nth(field.index);
     try {
       if(field.type==="file"){
@@ -208,12 +210,27 @@ async function fill() {
       }
       const entry=fieldValue(field,profile);
       if(entry && entry.value){
-        await locator.fill(entry.value,{timeout:2500});
+        if(field.tag==="select"){
+          try{await locator.selectOption({label:entry.value},{timeout:2500});}
+          catch{await locator.selectOption({value:entry.value},{timeout:2500});}
+        }else{
+          await locator.fill(entry.value,{timeout:2500});
+        }
         changes.push("Filled "+(field.label||field.name||entry.key));
       }
     }catch(err){
       warnings.push("Could not fill "+(field.label||field.name||"field")+"; complete it manually.");
     }
+  }
+  // Many ATS upload widgets clear the native file input while the file is
+  // uploaded asynchronously. Wait briefly for the exact attachment chip.
+  for(let attempt=0;attempt<4;attempt++){
+    const status=await review();
+    const waiting=(status.fields||[]).filter(x=>x.type==="file"&&x.required&&
+      documentKind(x)&&session.docs[documentKind(x)]&&!x.filled);
+    if(!waiting.length)break;
+    if(attempt===3)warnings.push("One or more required employer uploads have not finished; verify the attachment before submission.");
+    else await page.waitForTimeout(750);
   }
   session.notes.push(...changes.slice(-15));
   if(warnings.length)session.notes.push(...warnings.slice(-8));
