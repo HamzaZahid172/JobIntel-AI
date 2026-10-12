@@ -4,7 +4,7 @@ from datetime import date, datetime
 from urllib.parse import urlparse
 
 
-DIRECT_SOURCES = {"Lever", "Ashby", "SmartRecruiters", "Greenhouse"}
+DIRECT_SOURCES = {"Lever", "Ashby", "SmartRecruiters", "Greenhouse", "Personio", "Workable"}
 FOLLOWUP_STATES = {"Applied", "Screening"}
 
 
