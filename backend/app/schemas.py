@@ -99,3 +99,6 @@ class CandidateProfileUpdate(BaseModel):
     education: str = Field("", max_length=1500)
     employment: str = Field("", max_length=4000)
     languages: str = Field("", max_length=500)
+
+class CoverLetterDraft(BaseModel):
+    text: str = Field(min_length=80, max_length=12000)
