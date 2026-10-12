@@ -171,6 +171,7 @@ class CandidateDocument(Base):
     storage_key: Mapped[str] = mapped_column(String(64), unique=True)
     sha256: Mapped[str] = mapped_column(String(64))
     size_bytes: Mapped[int] = mapped_column(Integer)
+    cv_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     default_document: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
