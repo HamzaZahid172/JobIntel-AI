@@ -14,6 +14,7 @@ const navItems = [
   {route:'settings', label:'⚙ Settings'}
 ];
 let currentUser = null;
+let googleAuthPopup = null;
 let currentRoute = 'dashboard';
 let jobMarketCache = [];
 let showRejectedApplications = false;
@@ -412,6 +413,58 @@ function showApp(){
   startClientPolling();
 }
 
+async function startGoogleOAuth(linkExisting){
+  // Open synchronously inside the click handler so browsers do not block
+  // the popup after the asynchronous backend authorization-URL request.
+  const popup=window.open('about:blank','jobintelGoogleLogin','width=530,height=700');
+  if(!popup){
+    throw new Error('Allow the Google Sign-In popup in your browser.');
+  }
+  googleAuthPopup=popup;
+  try{
+    const result=await apiFetch(linkExisting?'/api/auth/google/link':'/api/auth/google/start',
+      {method:'POST'});
+    if(!result.authorization_url || !result.authorization_url.startsWith('https://accounts.google.com/')){
+      throw new Error('Google authorization URL was invalid.');
+    }
+    popup.location.href=result.authorization_url;
+    popup.focus();
+  }catch(err){
+    popup.close();googleAuthPopup=null;
+    throw err;
+  }
+}
+
+window.addEventListener('message',async function(event){
+  if(event.origin!==new URL(API).origin || event.source!==googleAuthPopup)return;
+  const msg=event.data;
+  if(!msg||msg.type!=='jobintel-google-auth')return;
+  googleAuthPopup=null;
+  if(msg.error){
+    const status=document.querySelector('#authMessage');
+    if(status)status.textContent=msg.error;
+    if(currentUser)alert('Google Sign-In: '+msg.error);
+    return;
+  }
+  if(msg.linked){
+    alert('Google Sign-In linked successfully. You can use Continue with Google next time.');
+    if(currentRoute==='settings')renderSettingsPage().catch(function(){});
+    return;
+  }
+  if(!msg.ticket)return;
+  try{
+    const result=await apiFetch('/api/auth/google/exchange',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ticket:msg.ticket})
+    });
+    localStorage.setItem('jobintel_token',result.token);
+    currentUser=result.user;
+    showApp();renderNav();await routeTo('dashboard');updateAssistantStatus();
+  }catch(err){
+    showAuth('Google Sign-In verification failed: '+err.message);
+  }
+});
+
 async function boot(){
   bindAuth();
   const token = localStorage.getItem('jobintel_token');
@@ -435,6 +488,10 @@ async function boot(){
 }
 
 function bindAuth(){
+  document.querySelector('#googleSignIn').onclick=async function(){
+    try{await startGoogleOAuth(false);}
+    catch(err){document.querySelector('#authMessage').textContent=err.message;}
+  };
   document.querySelector('#loginTab').onclick = function(){
     document.querySelector('#loginTab').classList.add('active');
     document.querySelector('#registerTab').classList.remove('active');
@@ -1545,6 +1602,9 @@ async function renderAnalyticsPage(){
 }
 
 async function renderSettingsPage(){
+  const googleSignIn=await apiFetch('/api/auth/google/status').catch(function(){
+    return {configured:false,linked:false};
+  });
   const verifiedProfile=await apiFetch('/api/candidate-profile');
   const vaultDocuments=await apiFetch('/api/documents');
   const sources=await apiFetch('/api/sources');
@@ -1554,6 +1614,16 @@ async function renderSettingsPage(){
 
   document.querySelector('#pageContent').innerHTML=
     '<div class="detailGrid">' +
+      '<div class="card detailPage googleSignInSettings">' +
+        '<h2>Google Sign-In</h2>' +
+        '<p>Optional account sign-in. Google ID verification is separate from Gmail mailbox permissions.</p>' +
+        (googleSignIn.linked?
+          '<p><span class="pill good">Linked</span> '+esc(googleSignIn.google_email)+'</p>':
+          googleSignIn.configured?
+          '<button id="linkGoogleSignIn" type="button" class="secondary">Link my Google account</button>'+
+          '<small>Google email must match this JobIntel account. You will approve in a separate Google window.</small>':
+          '<p class="muted">Not configured. Add the Google login redirect URI in Google Cloud to enable this option.</p>') +
+      '</div>' +
       '<div class="card detailPage">' +
         '<h2>Saved application profile</h2>' +
         '<p>Confirm these details once. JobIntel fills known fields automatically and asks for missing or sensitive answers.</p>' +
@@ -1627,6 +1697,13 @@ async function renderSettingsPage(){
       '</div>' +
     '</div>';
 
+  const linkGoogleBtn=document.querySelector('#linkGoogleSignIn');
+  if(linkGoogleBtn){
+    linkGoogleBtn.onclick=async function(){
+      try{await startGoogleOAuth(true);}
+      catch(err){alert('Could not link Google Sign-In: '+err.message);}
+    };
+  }
   document.querySelector('#candidateProfileForm').onsubmit=async function(e){
     e.preventDefault();
     const button=e.target.querySelector('button[type=submit]');
