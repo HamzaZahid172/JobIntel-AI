@@ -2,6 +2,8 @@ import base64
 import os
 import re
 import secrets
+import threading
+from html.parser import HTMLParser
 from email.message import EmailMessage
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
@@ -16,6 +18,7 @@ GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 GMAIL_API = "https://gmail.googleapis.com/gmail/v1"
+_SYNC_LOCK = threading.RLock()
 
 
 def gmail_config() -> dict:
@@ -191,7 +194,7 @@ def _tokens(value: str) -> set[str]:
 
 def classify_message(subject: str, snippet: str) -> str | None:
     """Conservative classification: generic words never trigger a rejection."""
-    value = f"{subject} {snippet}".lower()
+    value = f"{subject} {snippet}".lower().replace("’", "'").replace("‘", "'")
     rejection = (
         "regret to inform", "not moving forward", "not proceed with your",
         "other candidates", "other applicants", "application was unsuccessful",
@@ -272,6 +275,70 @@ def match_application(
     return candidates[0] if len(candidates) == 1 and application_context else None
 
 
+class _EmailHTMLText(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.segments: list[str] = []
+        self.hidden_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in {"script", "style", "head"}:
+            self.hidden_depth += 1
+        if tag in {"p", "br", "div", "li", "tr"}:
+            self.segments.append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "head"}:
+            self.hidden_depth = max(self.hidden_depth - 1, 0)
+
+    def handle_data(self, data: str) -> None:
+        if not self.hidden_depth:
+            self.segments.append(data)
+
+
+def _decode_body_data(data: str) -> str:
+    if not data:
+        return ""
+    try:
+        raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+        return raw.decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _message_body_text(message: dict, max_chars: int = 80000) -> str:
+    """Use full Gmail payload to detect outcomes beyond snippet length.
+
+    Prefer text/plain to avoid duplicate quoted HTML content; decode nested MIME
+    parts, ignore attachments and cap text before feeding the classifier.
+    """
+    plain: list[str] = []
+    html: list[str] = []
+
+    def walk(part: dict, depth: int = 0) -> None:
+        if depth > 12:
+            return
+        if part.get("filename"):
+            return
+        mime = (part.get("mimeType") or "").lower()
+        data = (part.get("body") or {}).get("data", "")
+        if mime == "text/plain" and data:
+            plain.append(_decode_body_data(data))
+        elif mime == "text/html" and data:
+            html.append(_decode_body_data(data))
+        for nested in part.get("parts") or []:
+            walk(nested, depth + 1)
+
+    walk(message.get("payload") or {})
+    if plain:
+        return " ".join(plain)[:max_chars]
+    if html:
+        parser = _EmailHTMLText()
+        parser.feed(" ".join(html)[:max_chars])
+        return " ".join(parser.segments)[:max_chars]
+    return ""
+
+
 def _gmail_headers(message: dict) -> dict:
     result = {}
     for header in message.get("payload", {}).get("headers", []):
@@ -312,6 +379,12 @@ def _gmail_message_query(days: int) -> str:
 
 
 def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 300) -> dict:
+    # Prevent user-triggered and scheduled syncs racing on a shared connection.
+    with _SYNC_LOCK:
+        return _sync_gmail_impl(db, user_id, days=days, max_results=max_results)
+
+
+def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int = 300) -> dict:
     connection = (
         db.query(GmailConnection)
         .filter(GmailConnection.user_id == user_id)
@@ -396,7 +469,7 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 300
             f"{GMAIL_API}/users/me/messages/{message_id}",
             headers=headers,
             params=[
-                ("format", "metadata"),
+                ("format", "full"),
                 ("metadataHeaders", "Subject"),
                 ("metadataHeaders", "From"),
                 ("metadataHeaders", "Date"),
@@ -411,11 +484,12 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 300
         subject = meta.get("subject", "")
         sender = meta.get("from", "")
         snippet = message.get("snippet", "")
-        outcome = classify_message(subject, snippet)
+        body_text = _message_body_text(message)
+        outcome = classify_message(subject, f"{snippet} {body_text}")
         if not outcome:
             continue
 
-        app = match_application(applications, subject, sender, snippet)
+        app = match_application(applications, subject, sender, f"{snippet} {body_text[:2000]}")
         if not app:
             continue
 
