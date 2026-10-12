@@ -31,6 +31,7 @@ from .job_acquisition import (
 )
 from .ats_collectors import PROVIDER_SOURCE, sync_configured_ats
 from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
+from .document_vault import store_document, read_document, public_document, choose_document
 from .auth import (
     claim_legacy_workspace,
     create_session,
@@ -72,6 +73,8 @@ from .models import (
     Application,
     ApplicationPackage,
     CVProfile,
+    CandidateDocument,
+    CandidateProfile,
     CollectorTarget,
     GmailConnection,
     GmailEvent,
@@ -83,6 +86,7 @@ from .models import (
 from .schemas import (
     ApplicationCreate,
     ApplicationOut,
+    CandidateProfileUpdate,
     ApprovedFollowupSend,
     ApplicationPackageAnswerUpdate,
     ApplicationPreparationRequest,
@@ -1608,6 +1612,125 @@ def get_cv(user: User = Depends(get_current_user), db: Session = Depends(get_db)
     }
 
 
+@app.get("/api/candidate-profile")
+def get_candidate_profile(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    row = db.query(CandidateProfile).filter(CandidateProfile.user_id == user.id).first()
+    verified = json.loads(row.profile_json or "{}") if row else {}
+    full_name = user.display_name.split()
+    return {
+        "firstName": verified.get("firstName", full_name[0] if full_name else ""),
+        "lastName": verified.get("lastName", " ".join(full_name[1:])),
+        "email": user.email, "fullName": user.display_name,
+        **{key: verified.get(key, "") for key in (
+            "phone", "city", "country", "linkedin", "github", "portfolio",
+            "education", "employment", "languages"
+        )},
+        "verified": bool(row),
+    }
+
+
+@app.patch("/api/candidate-profile")
+def update_candidate_profile(
+    payload: CandidateProfileUpdate,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    values = payload.model_dump()
+    for key in ("linkedin", "github", "portfolio"):
+        link = values.get(key, "").strip()
+        if link and (not link.startswith("https://") or "@" in link.split("/", 3)[2]):
+            raise HTTPException(400, key + " must be a public HTTPS URL.")
+    row = db.query(CandidateProfile).filter(CandidateProfile.user_id == user.id).first()
+    if row is None:
+        row = CandidateProfile(user_id=user.id)
+        db.add(row)
+    row.profile_json = json.dumps(values)
+    row.updated_at = datetime.utcnow()
+    db.commit()
+    return get_candidate_profile(user=user, db=db)
+
+
+@app.get("/api/documents")
+def list_candidate_documents(
+    kind: str | None = None,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    query = db.query(CandidateDocument).filter(CandidateDocument.user_id == user.id)
+    if kind:
+        if kind not in {"cv", "experience", "cover"}:
+            raise HTTPException(400, "Unknown document kind.")
+        query = query.filter(CandidateDocument.kind == kind)
+    return [public_document(row) for row in query.order_by(CandidateDocument.created_at.desc()).all()]
+
+
+@app.get("/api/documents/selected")
+def selected_documents_for_job(
+    job_id: int,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    job = db.get(LiveJob, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    title = job.title.lower()
+    family = ("qa" if any(x in title for x in ("qa", "quality", "test engineer", "sdet"))
+              else "data" if any(x in title for x in ("data engineer", "etl", "analytics engineer"))
+              else "backend" if any(x in title for x in ("backend", "fullstack", "full stack", "ai engineer"))
+              else "general")
+    docs = {}
+    for kind in ("cv", "experience", "cover"):
+        row = choose_document(db, user.id, kind, family if kind == "cv" else "general")
+        if row:
+            docs[kind] = public_document(row)
+    return {"role_family": family, "documents": docs}
+
+
+@app.post("/api/documents")
+async def upload_candidate_document(
+    file: UploadFile = File(...), kind: str = "cv", role_family: str = "general",
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    raw = await file.read(8 * 1024 * 1024 + 1)
+    row = store_document(db, user.id, file.filename or "document.pdf", raw, kind, role_family)
+    return public_document(row)
+
+
+@app.post("/api/documents/{document_id}/default")
+def set_default_candidate_document(
+    document_id: int,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    row = db.query(CandidateDocument).filter(
+        CandidateDocument.id == document_id, CandidateDocument.user_id == user.id
+    ).first()
+    if not row:
+        raise HTTPException(404, "Document not found.")
+    db.query(CandidateDocument).filter(
+        CandidateDocument.user_id == user.id, CandidateDocument.kind == row.kind,
+        CandidateDocument.role_family == row.role_family
+    ).update({"default_document": False})
+    row.default_document = True
+    db.commit()
+    return public_document(row)
+
+
+@app.get("/api/documents/{document_id}/content")
+def candidate_document_content(
+    document_id: int,
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    row = db.query(CandidateDocument).filter(
+        CandidateDocument.id == document_id, CandidateDocument.user_id == user.id
+    ).first()
+    if not row:
+        raise HTTPException(404, "Document not found.")
+    return {
+        "name": row.filename,
+        "mimeType": row.mime_type,
+        "base64": base64.b64encode(read_document(row)).decode("ascii"),
+    }
+
+
 @app.post("/api/cv/upload")
 async def upload_cv(
     file: UploadFile = File(...),
@@ -1635,6 +1758,9 @@ async def upload_cv(
     db.add(profile)
     db.commit()
     db.refresh(profile)
+    # Preserve the exact source bytes as well as extracted CV text.
+    # Users who uploaded before this release need to upload once more.
+    store_document(db, user.id, file.filename or "cv.pdf", raw, "cv", "general")
     rescored = rescore_jobs(db, profile)
     return {
         "uploaded": True,
