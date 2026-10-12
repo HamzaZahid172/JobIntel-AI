@@ -36,7 +36,7 @@ def test_background_sync_only_checks_connections_when_due(monkeypatch):
     monkeypatch.setattr("app.gmail_worker.SessionLocal",lambda:Session(engine))
     monkeypatch.setattr("app.gmail_worker.sync_gmail",fake_sync)
     assert sync_due_connections(now,interval_seconds=120)==2
-    assert calls==[(1,45,300),(3,7,300)]
+    assert calls==[(1,45,100),(3,7,100)]
     assert sync_due_connections(now,interval_seconds=120)==0
     engine.dispose()
 
