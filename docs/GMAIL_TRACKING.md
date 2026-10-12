@@ -67,3 +67,34 @@ When a general Gmail inbox contains hundreds of recent messages, relevant employ
 In **My Applications**, use the recent-rejection banner or **Show rejected → Review rejection** to view a source-grounded summary of the original employer email, a limited excerpt and practical suggestions. The backend retrieves the original rejection body on request with the already-authorized Gmail read-only scope. It does not archive the full email body in JobIntel. Recommendations do not claim an undisclosed ATS failure or a specific CV mistake.
 
 This is best-effort Gmail polling, not an instantaneous Google notification. The local Docker backend must run, and the Gmail token must be valid. When debugging use My Applications → Sync Gmail and inspect the listed / matched / updated counts, then Docker backend logs. Authentication failures or unmatched company evidence still require investigation.
+
+## October 12: Verify Gmail status per application
+
+If a rejection is visible in Gmail but the application still says **Applied**, open
+**My Applications**, find that application and click **Check Gmail Status**.
+The new endpoint searches Gmail directly for that company's messages using your
+already connected OAuth account, including Trash, instead of waiting for a full
+mailbox-wide scan. It reports the connected Gmail address, matched rejections,
+message counts, the resulting status and any API error.
+
+If the result says no match, verify that the Gmail address is the *same*
+account in which the rejection was received. Inspect Settings → Gmail and
+backend logs. An OAuth connection alone does not guarantee successful syncing.
+
+Successfully matched rejections are automatically marked **Rejected**, removed
+from the default **active** view and retained under **Show rejected** for
+rejection analysis. No application record or email is deleted.
+
+Routine background scans prioritize employers before the general inbox, and
+process fewer unrelated messages to reduce delay. Existing Gmail events with
+confirmed outcomes are reconciled back onto the application record if the
+status was changed incorrectly. This recovery does not turn unrelated mail
+into rejection events.
+
+### Repository hygiene
+
+GitHub Actions workflow `cleanup-merged-branches.yml` checks `feature/*`
+and `fix/*` branches after every `main` push. It deletes a branch only if
+its exact head commit is the head of a merged pull request against `develop`
+or `main`, after verifying the branch has not moved. `main`, `develop`,
+protected branches and unmerged changes remain untouched.
