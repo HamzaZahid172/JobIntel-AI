@@ -1315,6 +1315,8 @@ async function renderAnalyticsPage(){
 }
 
 async function renderSettingsPage(){
+  const verifiedProfile=await apiFetch('/api/candidate-profile');
+  const vaultDocuments=await apiFetch('/api/documents');
   const sources=await apiFetch('/api/sources');
   const status=await apiFetch('/api/assistant/status');
   const targets=await apiFetch('/api/collector-targets');
@@ -1322,6 +1324,29 @@ async function renderSettingsPage(){
 
   document.querySelector('#pageContent').innerHTML=
     '<div class="detailGrid">' +
+      '<div class="card detailPage">' +
+        '<h2>Saved application profile</h2>' +
+        '<p>Confirm these details once. JobIntel fills known fields automatically and asks for missing or sensitive answers.</p>' +
+        '<form id="candidateProfileForm"><div class="p0ProfileGrid">' +
+        ['firstName','lastName','phone','city','country','linkedin','github','portfolio','education','employment','languages'].map(function(key){
+          const human=key.replace(/([A-Z])/g,' $1').replace(/^./,m=>m.toUpperCase());
+          return '<label>'+esc(human)+'<input name="'+key+'" value="'+esc(verifiedProfile[key]||'')+'" placeholder="'+(key==='country'?'Germany':'')+'"></label>';
+        }).join('')+'</div>' +
+        '<p class="p0VaultInfo">Email: '+esc(verifiedProfile.email)+' (verified account)</p>' +
+        '<button class="primary" type="submit">Save verified application profile</button></form></div>' +
+      '<div class="card detailPage">' +
+        '<h2>Private document vault</h2>' +
+        '<p>Upload each CV version and supporting letter once. Files are encrypted and stored in a persistent local Docker volume.</p>' +
+        '<form id="candidateVaultUpload"><label>Document type<select name="kind"><option value="cv">CV / Resume</option><option value="experience">Experience letter</option><option value="cover">Reusable cover letter</option></select></label>' +
+        '<label>CV role family<select name="role_family"><option value="general">General</option><option value="qa">QA Automation</option><option value="data">Data Engineering</option><option value="backend">Backend / AI</option></select></label>' +
+        '<label>Original document<input name="document" type="file" accept=".pdf,.doc,.docx,.txt" required></label>' +
+        '<button class="primary" type="submit">Save document</button></form>' +
+        (vaultDocuments.length?vaultDocuments.map(function(doc){
+          return '<div class="p0VaultRow"><b>'+esc(doc.filename)+'</b><small>'+esc(doc.kind)+' · '+esc(doc.role_family)+
+            ' · '+(doc.size_bytes/1024).toFixed(0)+' KB</small>' +
+            (doc.default_document?'<span class="pill good">Default</span>':'<button type="button" class="secondary candidateVaultDefault" data-id="'+doc.id+'">Set default</button>')+'</div>';
+        }).join(''):'<p>No original files saved yet. Upload a CV once to enable automatic document attachment.</p>') +
+      '</div>' +
       '<form id="profileForm" class="card detailPage">' +
         '<h2>Profile</h2>' +
         '<label>Name<input name="display_name" value="'+esc(currentUser.display_name)+'"></label>' +
@@ -1371,6 +1396,49 @@ async function renderSettingsPage(){
         '<pre class="codeSample">{ "jobs": [{ "source": "External Collector", "title": "...", "company": "...", "location": "Germany", "url": "...", "description": "...", "remote": false }] }</pre>' +
       '</div>' +
     '</div>';
+
+  document.querySelector('#candidateProfileForm').onsubmit=async function(e){
+    e.preventDefault();
+    const button=e.target.querySelector('button[type=submit]');
+    button.disabled=true;
+    try{
+      const values=Object.fromEntries(new FormData(e.target).entries());
+      await apiFetch('/api/candidate-profile',{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});
+      alert('Verified application profile saved. These details can be reused by Assisted Apply.');
+      await renderSettingsPage();
+    }catch(err){alert('Candidate profile could not be saved: '+err.message);}
+    finally{button.disabled=false;}
+  };
+  document.querySelector('#candidateVaultUpload').onsubmit=async function(e){
+    e.preventDefault();
+    const button=e.target.querySelector('button[type=submit]');
+    button.disabled=true;
+    try{
+      const form=new FormData(e.target);
+      const kind=form.get('kind');
+      const role=form.get('role_family');
+      const file=form.get('document');
+      if(!file||!file.size)throw new Error('Select your original PDF/DOCX file.');
+      const payload=new FormData();
+      payload.append('file',file);
+      const path=kind==='cv'?'/api/cv/upload?role_family='+encodeURIComponent(role):
+        '/api/documents?kind='+encodeURIComponent(kind)+'&role_family=general';
+      await apiFetch(path,{method:'POST',body:payload});
+      await renderSettingsPage();
+    }catch(err){alert('Document could not be saved: '+err.message);}
+    finally{button.disabled=false;}
+  };
+  document.querySelectorAll('.candidateVaultDefault').forEach(function(button){
+    button.onclick=async function(){
+      button.disabled=true;
+      try{
+        await apiFetch('/api/documents/'+button.dataset.id+'/default',{method:'POST'});
+        await renderSettingsPage();
+      }catch(err){alert('Could not select default document: '+err.message);}
+      finally{button.disabled=false;}
+    };
+  });
 
   document.querySelector('#profileForm').onsubmit=async function(e){
     e.preventDefault();
