@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.gmail_sync import _message_body_text, classify_message, sync_gmail, sync_application_gmail
+from app.gmail_sync import _message_body_text, classify_message, sync_gmail, sync_application_gmail, sync_active_applications_gmail
 from app.models import Application, GmailConnection, GmailEvent
 
 
@@ -206,5 +206,52 @@ def test_ommax_individual_sync_sets_rejected_and_reconciles_cached_event(monkeyp
         assert app.status=="Rejected"
         assert replay["already_processed"]==1
         assert replay["updated"]==1
+        assert db.query(GmailEvent).count()==1
+    engine.dispose()
+
+
+def test_page_refresh_uses_only_targeted_employer_queries(monkeypatch):
+    engine=create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        app=Application(user_id=44,company="Ommax",
+            role="Intern AI & Data Engineering (m/f/d)",status="Applied",
+            applied_date=date(2026,10,9))
+        db.add(app)
+        db.add(GmailConnection(user_id=44,google_email="candidate@example.com",
+            access_token="token",refresh_token="refresh",
+            token_expires_at=datetime(2027,1,1)))
+        db.commit()
+        db.refresh(app)
+        queries=[]
+        class Resp:
+            status_code=200
+            def __init__(self,value):self.value=value
+            def raise_for_status(self):pass
+            def json(self):return self.value
+        def mock_get(url,headers,params,timeout):
+            if url.endswith("/messages"):
+                queries.append(params["q"])
+                assert '"Ommax"' in params["q"], "Page-load refresh must not scan unrelated mail"
+                return Resp({"messages":[{"id":"ommax-page-load"}]})
+            assert url.endswith("/messages/ommax-page-load")
+            return Resp({
+                "snippet": FULL_EMAIL[:110],
+                "internalDate":str(int(datetime(2026,10,12,17,0).timestamp()*1000)),
+                "payload":{"mimeType":"text/plain",
+                    "body":{"data":encoded(FULL_EMAIL)},
+                    "headers":[{"name":"Subject","value":SUBJECT},
+                               {"name":"From","value":"Sophie Steib <join@ommax.com>"}]}})
+        monkeypatch.setattr("app.gmail_sync.httpx.get",mock_get)
+        out=sync_active_applications_gmail(db,44)
+        db.refresh(app)
+        assert app.status=="Rejected"
+        assert out["targeted_only"] is True
+        assert out["updated"]==1
+        assert out["outcomes"]["Rejected"]==1
+        assert len(queries)==1
+        # Already matched rejection remains idempotent on the next page refresh.
+        again=sync_active_applications_gmail(db,44)
+        assert again["updated"]==0
         assert db.query(GmailEvent).count()==1
     engine.dispose()
