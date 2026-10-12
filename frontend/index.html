@@ -35,11 +35,11 @@
   <aside>
     <div class="brand"><div class="logo">J</div><span>JobIntel AI</span></div>
     <nav id="nav"></nav>
-    <div class="profileMini">
+    <button class="profileMini profileAccountButton" type="button" id="sidebarAccount" aria-label="Open account menu">
       <b id="userNameMini">Profile</b>
       <small id="userEmailMini"></small>
-    </div>
-    <div class="sideNote"><b>✨ Local-first</b><small>Free job feeds + local CV analysis</small></div>
+      <span class="accountChevron" aria-hidden="true">⌄</span>
+    </button>
   </aside>
 
   <main>
@@ -51,12 +51,21 @@
       </div>
       <div class="headerActions">
         <button id="refreshJobs" class="secondary">↻ Refresh Current Jobs</button>
-        <div class="manual">✎ Applications tracked manually</div>
+        <button id="refreshDashboard" class="secondary" type="button">↻ Update dashboard</button>
       </div>
-      <div class="headerIcons">🔔 <button id="avatar" class="avatar avatarBtn" type="button">HZ</button></div>
+      <div class="headerIcons accountAnchor">
+        <button id="avatar" class="avatar avatarBtn" type="button" aria-expanded="false" aria-controls="accountMenu" aria-label="Open account menu">HZ</button>
+        <div id="accountMenu" class="accountMenu hidden" role="menu" aria-label="Your account">
+          <div class="accountMenuIdentity"><b id="accountMenuName">Account</b><small id="accountMenuEmail"></small></div>
+          <button type="button" id="accountSettings" role="menuitem">Account &amp; Settings</button>
+          <button type="button" id="accountSwitch" role="menuitem">Switch account / Sign in</button>
+          <button type="button" id="accountLogout" role="menuitem">Log out</button>
+        </div>
+      </div>
     </header>
 
     <div id="dashboardContent">
+      <div id="dashboardRefreshStatus" class="dashboardRefreshStatus" role="status" aria-live="polite">Dashboard data updates automatically while this page is open.</div>
       <section id="metrics" class="metrics"></section>
       <section id="actionCenterQuick" class="card panel actionQuick">Loading the application action queue…</section>
       <section class="grid3">

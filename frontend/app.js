@@ -17,6 +17,9 @@ let currentRoute = 'dashboard';
 let jobMarketCache = [];
 let showRejectedApplications = false;
 let assistantStatusTimer = null;
+let dashboardPoller = null;
+let dashboardLoadPromise = null;
+let lastDashboardCheck = 0;
 let gmailStatusWatcher = null;
 let observedGmailSyncTime = null;
 let gmailStatusCheckInFlight = false;
@@ -75,32 +78,60 @@ function humanRoleFamily(value) {
   }[value] || value;
 }
 
-async function load() {
+async function load(){
+  if(dashboardLoadPromise)return dashboardLoadPromise;
+  dashboardLoadPromise=renderDashboardData();
+  try{
+    await dashboardLoadPromise;
+  }catch(err){
+    const line=document.querySelector('#dashboardRefreshStatus');
+    if(line && currentRoute==='dashboard')line.textContent='Dashboard refresh failed: '+err.message+' · Showing previously loaded values.';
+    throw err;
+  }finally{
+    dashboardLoadPromise=null;
+  }
+}
+
+async function renderDashboardData() {
   const d = await apiFetch('/api/dashboard');
+  lastDashboardCheck=Date.now();
+  const statusLine=document.querySelector('#dashboardRefreshStatus');
+  if(statusLine && currentRoute==='dashboard'){
+    statusLine.textContent='Dashboard checked '+new Date(lastDashboardCheck).toLocaleTimeString()+' · Auto-refresh every 45 seconds while this tab is active. Job feeds require separate manual refresh.';
+  }
   const s = d.summary;
 
   const sourceText = Object.entries(d.market.sources || {}).map(([k,v]) => `${k}: ${v}`).join(' · ');
   const atsConfigured = (d.market.source_analytics || []).filter(function(x){
     return x.mode === 'Employer ATS' && x.status === 'configured';
   }).length;
+  const syncedAt=d.market.last_sync?new Date(d.market.last_sync).getTime():0;
+  const marketStale=!syncedAt || Date.now()-syncedAt>12*60*60*1000;
   document.querySelector('#marketStatus').textContent =
     d.market.live
       ? (d.cv.uploaded
           ? `CV-filtered market · ${d.market.relevant_jobs} relevant of ${d.market.total_jobs} tracked · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`
           : `Live PostgreSQL snapshot · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`)
-      : 'No live jobs stored yet. Click “Refresh Current Jobs”.';
+      : 'No stored jobs yet. Click “Refresh Current Jobs”.';
+  if(d.market.live && marketStale){
+    document.querySelector('#marketStatus').textContent += ' · Cached jobs may be stale; refresh sources when ready.';
+  }
 
   const atsValue = s.ats_score == null ? '—' : `${Math.round(s.ats_score)} / 100`;
+  const statuses=d.pipeline || {};
+  const awaiting=(statuses.Applied||0)+(statuses.Screening||0);
   const metrics = [
-    ['💼', d.cv.uploaded ? 'CV-Relevant Jobs' : 'Tracked Live Jobs', s.active_jobs, d.cv.uploaded ? `Filtered from ${s.total_market_jobs} live jobs` : 'Current feed snapshot'],
-    ['🆕','Posted Today',s.new_today,d.cv.uploaded ? 'Relevant to your profile' : 'Based on source timestamps'],
-    ['➤','Applications',s.applications,'Your manual tracker'],
-    ['👥','Interviews',s.interviews,'From your tracker'],
-    ['🏆','Offers',s.offers,'From your tracker'],
-    ['▤','ATS Readiness',atsValue,d.cv.uploaded ? `✓ ${d.cv.ats.status}` : 'Upload CV to calculate'],
+    ['💼', d.cv.uploaded ? 'Relevant Jobs' : 'Tracked Jobs', s.active_jobs, `From ${s.total_market_jobs} stored vacancies`],
+    ['🆕', 'Posted Today', s.new_today, 'Based on available posting dates'],
+    ['➤', 'Applications Tracked', s.applications, 'Including closed / rejected records'],
+    ['✉', 'Awaiting Replies', awaiting, 'Applied or screening'],
+    ['👥', 'Interview Stages', s.interviews, 'Interview, final and offers'],
+    ['↘', 'Rejections', statuses.Rejected||0, 'Kept in application history'],
+    ['🏆', 'Offers', s.offers, 'Confirmed tracker status'],
+    ['▤', 'ATS Readiness', atsValue, d.cv.uploaded ? `✓ ${d.cv.ats.status}` : 'Upload CV to calculate'],
   ];
   document.querySelector('#metrics').innerHTML = metrics.map((m,i)=>`
-    <div class="metric card ${i===5?'atsMini':''}">
+    <div class="metric card ${i===7?'atsMini':i===5?'dashboardMetricBad':''}">
       <div class="metricIcon">${m[0]}</div>
       <div><small>${m[1]}</small><b>${m[2]}</b><span>${esc(m[3])}</span></div>
     </div>`).join('');
@@ -157,8 +188,8 @@ async function load() {
   }
 
   document.querySelector('#pipeline').innerHTML =
-    `<div class="panelHead"><h3>Application Pipeline</h3><span class="pill info">✎ Manual tracking</span></div>
-     <div class="pipeline">${['Saved','Applied','Screening','Interview','Final','Offer'].map(x=>`
+    `<div class="panelHead"><h3>Application Pipeline</h3><span class="pill info">Gmail + manual statuses</span></div>
+     <div class="pipeline">${['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(x=>`
        <div><div class="dot">${d.pipeline[x]||0}</div><small>${x}</small></div>`).join('')}</div>
      <button id="addApp" class="primary">＋ Add application</button>`;
 
@@ -329,7 +360,41 @@ function initials(name){
   return (name || 'U').split(/\s+/).filter(Boolean).slice(0,2).map(function(x){return x[0].toUpperCase();}).join('');
 }
 
+function closeAccountMenu(){
+  const menu=document.querySelector('#accountMenu');
+  if(menu)menu.classList.add('hidden');
+  const avatar=document.querySelector('#avatar');
+  if(avatar)avatar.setAttribute('aria-expanded','false');
+}
+
+function toggleAccountMenu(){
+  const menu=document.querySelector('#accountMenu');
+  if(!menu || !currentUser)return;
+  const isOpen=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden',!isOpen);
+  document.querySelector('#avatar').setAttribute('aria-expanded',String(isOpen));
+  if(isOpen)document.querySelector('#accountSettings').focus();
+}
+
+function stopClientPolling(){
+  if(assistantStatusTimer){clearInterval(assistantStatusTimer);assistantStatusTimer=null;}
+  if(gmailStatusWatcher){clearInterval(gmailStatusWatcher);gmailStatusWatcher=null;}
+  if(dashboardPoller){clearInterval(dashboardPoller);dashboardPoller=null;}
+}
+
+function startClientPolling(){
+  if(!assistantStatusTimer)assistantStatusTimer=setInterval(updateAssistantStatus,10000);
+  if(!gmailStatusWatcher)gmailStatusWatcher=setInterval(autoSyncGmail,30000);
+  if(!dashboardPoller)dashboardPoller=setInterval(function(){
+    if(currentRoute==='dashboard' && !document.hidden && localStorage.getItem('jobintel_token')){
+      load().catch(function(){});
+    }
+  },45000);
+}
+
 function showAuth(message){
+  closeAccountMenu();
+  stopClientPolling();
   document.querySelector('#authScreen').classList.remove('hidden');
   document.querySelector('#appShell').classList.add('hidden');
   if (message) document.querySelector('#authMessage').textContent = message;
@@ -341,6 +406,9 @@ function showApp(){
   document.querySelector('#userNameMini').textContent = currentUser.display_name;
   document.querySelector('#userEmailMini').textContent = currentUser.email;
   document.querySelector('#avatar').textContent = initials(currentUser.display_name);
+  document.querySelector('#accountMenuName').textContent=currentUser.display_name;
+  document.querySelector('#accountMenuEmail').textContent=currentUser.email;
+  startClientPolling();
 }
 
 async function boot(){
@@ -401,6 +469,7 @@ function bindAuth(){
 }
 
 async function routeTo(route, updateHash=true){
+  closeAccountMenu();
   currentRoute = route;
   if (updateHash) location.hash = route;
   renderNav();
@@ -1578,9 +1647,15 @@ async function renderSettingsPage(){
     };
   });
 }
-async function logout(){
+async function logout(switchAccount=false){
+  closeAccountMenu();
   try{await apiFetch('/api/auth/logout',{method:'POST'});}catch{}
-  localStorage.removeItem('jobintel_token'); currentUser=null; showAuth('Logged out.');
+  localStorage.removeItem('jobintel_token');
+  currentUser=null;
+  showAuth(switchAccount?'Sign in with another JobIntel account or create a local profile.':'You have logged out.');
+  document.querySelector('#loginTab').click();
+  const form=document.querySelector('#loginForm');
+  if(form){form.reset();form.querySelector('input[name=email]').focus();}
 }
 
 async function autoSyncGmail(){
@@ -1624,7 +1699,31 @@ async function updateAssistantStatus(){
   }catch{}
 }
 
-document.querySelector('#avatar').onclick=function(){routeTo('settings');};
+document.querySelector('#avatar').onclick=toggleAccountMenu;
+document.querySelector('#sidebarAccount').onclick=toggleAccountMenu;
+document.querySelector('#accountSettings').onclick=function(){closeAccountMenu();routeTo('settings');};
+document.querySelector('#accountSwitch').onclick=function(){logout(true);};
+document.querySelector('#accountLogout').onclick=function(){logout(false);};
+document.addEventListener('click',function(event){
+  if(!event.target.closest('#accountMenu,#avatar,#sidebarAccount'))closeAccountMenu();
+});
+document.addEventListener('keydown',function(event){
+  if(event.key==='Escape')closeAccountMenu();
+});
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden && currentRoute==='dashboard' &&
+     localStorage.getItem('jobintel_token') && Date.now()-lastDashboardCheck>45000){
+    load().catch(function(){});
+  }
+});
+document.querySelector('#refreshDashboard').onclick=async function(){
+  const button=this;
+  button.disabled=true;
+  button.textContent='Updating…';
+  try{await load();}
+  catch(err){/* Dashboard displays an inline error without resetting widgets. */}
+  finally{button.disabled=false;button.textContent='↻ Update dashboard';}
+};
 document.querySelector('#closeImportModal').onclick=function(){document.querySelector('#importModal').classList.add('hidden');};
 document.querySelector('#importForm').onsubmit=async function(e){
   e.preventDefault();

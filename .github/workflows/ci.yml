@@ -28,6 +28,8 @@ jobs:
       - name: Validate Docker Compose configuration
         run: docker compose -f docker-compose.yml config --quiet
       - run: node --check frontend/app.js
+      - name: Test dashboard/account UI contracts
+        run: node --test frontend/tests/*.test.js
       - name: Check local browser assistant syntax
         run: |
           node --check browser-assistant/server.js
