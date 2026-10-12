@@ -66,6 +66,7 @@ from .gmail_sync import (
     serialize_event,
     sync_gmail,
     sync_application_gmail,
+    sync_active_applications_gmail,
 )
 from .models import (
     Application,
@@ -671,6 +672,21 @@ def gmail_sync_now(
     except httpx.HTTPError as exc:
         logger.exception("Gmail sync failed.")
         raise HTTPException(502, "Gmail could not be reached. Try reconnecting if this persists.") from exc
+
+
+@app.post("/api/gmail/sync-applications")
+def gmail_sync_applications(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Targeted Gmail refresh when the My Applications page is opened/refreshed."""
+    try:
+        return sync_active_applications_gmail(db, user.id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except httpx.HTTPError as exc:
+        logger.exception("Gmail application refresh failed for user %s", user.id)
+        raise HTTPException(502, "Gmail could not be reached. Verify your Gmail connection.") from exc
 
 
 @app.post("/api/applications/{application_id}/sync-gmail-status")
