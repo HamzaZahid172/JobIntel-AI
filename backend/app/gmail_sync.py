@@ -555,6 +555,7 @@ def _sync_gmail_impl(
     classified_messages = unmatched_messages = previously_processed = 0
     revised_rejections = 0
     invalidated_apps: set[int] = set()
+    invalidated_subjects: dict[int, set[str]] = {}
     outcomes: dict[str, int] = {}
 
     for message_id in message_ids:
@@ -599,6 +600,7 @@ def _sync_gmail_impl(
                     revised_rejections += 1
                     if linked:
                         invalidated_apps.add(linked.id)
+                        invalidated_subjects.setdefault(linked.id, set()).add(actual_subject)
                     continue
             if linked and existing.outcome:
                 if _apply_outcome(linked, existing.outcome):
@@ -688,9 +690,7 @@ def _sync_gmail_impl(
         else:
             linked.status = "Applied"
         # Remove only invalidated auto-generated rejection note lines.
-        invalid_subjects = {
-            signal.subject for signal in signals if signal.outcome == "NeedsReview"
-        }
+        invalid_subjects = invalidated_subjects.get(app_id, set())
         linked.notes = "\n".join(
             line for line in (linked.notes or "").splitlines()
             if not (
