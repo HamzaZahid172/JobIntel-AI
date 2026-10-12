@@ -360,7 +360,41 @@ function initials(name){
   return (name || 'U').split(/\s+/).filter(Boolean).slice(0,2).map(function(x){return x[0].toUpperCase();}).join('');
 }
 
+function closeAccountMenu(){
+  const menu=document.querySelector('#accountMenu');
+  if(menu)menu.classList.add('hidden');
+  const avatar=document.querySelector('#avatar');
+  if(avatar)avatar.setAttribute('aria-expanded','false');
+}
+
+function toggleAccountMenu(){
+  const menu=document.querySelector('#accountMenu');
+  if(!menu || !currentUser)return;
+  const isOpen=menu.classList.contains('hidden');
+  menu.classList.toggle('hidden',!isOpen);
+  document.querySelector('#avatar').setAttribute('aria-expanded',String(isOpen));
+  if(isOpen)document.querySelector('#accountSettings').focus();
+}
+
+function stopClientPolling(){
+  if(assistantStatusTimer){clearInterval(assistantStatusTimer);assistantStatusTimer=null;}
+  if(gmailStatusWatcher){clearInterval(gmailStatusWatcher);gmailStatusWatcher=null;}
+  if(dashboardPoller){clearInterval(dashboardPoller);dashboardPoller=null;}
+}
+
+function startClientPolling(){
+  if(!assistantStatusTimer)assistantStatusTimer=setInterval(updateAssistantStatus,10000);
+  if(!gmailStatusWatcher)gmailStatusWatcher=setInterval(autoSyncGmail,30000);
+  if(!dashboardPoller)dashboardPoller=setInterval(function(){
+    if(currentRoute==='dashboard' && !document.hidden && localStorage.getItem('jobintel_token')){
+      load().catch(function(){});
+    }
+  },45000);
+}
+
 function showAuth(message){
+  closeAccountMenu();
+  stopClientPolling();
   document.querySelector('#authScreen').classList.remove('hidden');
   document.querySelector('#appShell').classList.add('hidden');
   if (message) document.querySelector('#authMessage').textContent = message;
@@ -372,6 +406,9 @@ function showApp(){
   document.querySelector('#userNameMini').textContent = currentUser.display_name;
   document.querySelector('#userEmailMini').textContent = currentUser.email;
   document.querySelector('#avatar').textContent = initials(currentUser.display_name);
+  document.querySelector('#accountMenuName').textContent=currentUser.display_name;
+  document.querySelector('#accountMenuEmail').textContent=currentUser.email;
+  startClientPolling();
 }
 
 async function boot(){
@@ -432,6 +469,7 @@ function bindAuth(){
 }
 
 async function routeTo(route, updateHash=true){
+  closeAccountMenu();
   currentRoute = route;
   if (updateHash) location.hash = route;
   renderNav();
@@ -1609,9 +1647,15 @@ async function renderSettingsPage(){
     };
   });
 }
-async function logout(){
+async function logout(switchAccount=false){
+  closeAccountMenu();
   try{await apiFetch('/api/auth/logout',{method:'POST'});}catch{}
-  localStorage.removeItem('jobintel_token'); currentUser=null; showAuth('Logged out.');
+  localStorage.removeItem('jobintel_token');
+  currentUser=null;
+  showAuth(switchAccount?'Sign in with another JobIntel account or create a local profile.':'You have logged out.');
+  document.querySelector('#loginTab').click();
+  const form=document.querySelector('#loginForm');
+  if(form){form.reset();form.querySelector('input[name=email]').focus();}
 }
 
 async function autoSyncGmail(){
@@ -1655,7 +1699,31 @@ async function updateAssistantStatus(){
   }catch{}
 }
 
-document.querySelector('#avatar').onclick=function(){routeTo('settings');};
+document.querySelector('#avatar').onclick=toggleAccountMenu;
+document.querySelector('#sidebarAccount').onclick=toggleAccountMenu;
+document.querySelector('#accountSettings').onclick=function(){closeAccountMenu();routeTo('settings');};
+document.querySelector('#accountSwitch').onclick=function(){logout(true);};
+document.querySelector('#accountLogout').onclick=function(){logout(false);};
+document.addEventListener('click',function(event){
+  if(!event.target.closest('#accountMenu,#avatar,#sidebarAccount'))closeAccountMenu();
+});
+document.addEventListener('keydown',function(event){
+  if(event.key==='Escape')closeAccountMenu();
+});
+document.addEventListener('visibilitychange',function(){
+  if(!document.hidden && currentRoute==='dashboard' &&
+     localStorage.getItem('jobintel_token') && Date.now()-lastDashboardCheck>45000){
+    load().catch(function(){});
+  }
+});
+document.querySelector('#refreshDashboard').onclick=async function(){
+  const button=this;
+  button.disabled=true;
+  button.textContent='Updating…';
+  try{await load();}
+  catch(err){/* Dashboard displays an inline error without resetting widgets. */}
+  finally{button.disabled=false;button.textContent='↻ Update dashboard';}
+};
 document.querySelector('#closeImportModal').onclick=function(){document.querySelector('#importModal').classList.add('hidden');};
 document.querySelector('#importForm').onsubmit=async function(e){
   e.preventDefault();
