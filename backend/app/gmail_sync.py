@@ -385,6 +385,18 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 300
         return _sync_gmail_impl(db, user_id, days=days, max_results=max_results)
 
 
+def sync_active_applications_gmail(db: Session, user_id: int) -> dict:
+    """Refresh active applications using targeted employer Gmail searches only.
+
+    Intended for page refresh. Avoid a large, unrelated inbox scan and reuse
+    the same deduplication and safe application matching as scheduled syncs.
+    """
+    with _SYNC_LOCK:
+        return _sync_gmail_impl(
+            db, user_id, days=45, max_results=100, targeted_only=True
+        )
+
+
 def sync_application_gmail(db: Session, user_id: int, application_id: int) -> dict:
     """Targeted user-authorized scan for one tracked application, no full-inbox fetch."""
     with _SYNC_LOCK:
@@ -395,7 +407,7 @@ def sync_application_gmail(db: Session, user_id: int, application_id: int) -> di
 
 def _sync_gmail_impl(
     db: Session, user_id: int, days: int = 45, max_results: int = 300,
-    only_app_id: int | None = None,
+    only_app_id: int | None = None, targeted_only: bool = False,
 ) -> dict:
     connection = (
         db.query(GmailConnection)
@@ -456,7 +468,7 @@ def _sync_gmail_impl(
                 message_ids.append(message_id)
                 targeted_listed += 1
 
-    if only_app_id is None:
+    if only_app_id is None and not targeted_only:
         gmail_query = _gmail_message_query(days)
         page_token = None
         # Follow nextPageToken; Gmail can return fewer messages than requested.
@@ -594,6 +606,7 @@ def _sync_gmail_impl(
         "unmatched": unmatched_messages,
         "already_processed": previously_processed,
         "gmail_account": connection.google_email,
+        "targeted_only": targeted_only or only_app_id is not None,
         "matched": matched,
         "updated": updated,
         "events": events_created,
