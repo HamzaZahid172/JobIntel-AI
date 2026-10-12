@@ -127,9 +127,17 @@
           <label>LinkedIn (optional)<input name="linkedin" type="url"></label>
           <label>GitHub (optional)<input name="github" type="url"></label>
           <label>Portfolio (optional)<input name="portfolio" type="url"></label>
-          <label>CV / Resume <small>(PDF/DOC/DOCX/TXT)</small><input type="file" name="cv" accept=".pdf,.doc,.docx,.txt" required></label>
+          <p id="assistDocInfo" class="p0VaultInfo">Loading your saved CV and supporting documents…</p>
+          <label>CV override (optional) <small>Saved CV is selected automatically</small><input type="file" name="cv" accept=".pdf,.doc,.docx,.txt"></label>
           <label>Cover letter (optional)<input type="file" name="cover" accept=".pdf,.doc,.docx,.txt"></label>
           <label>Experience letter (optional)<input type="file" name="experience" accept=".pdf,.doc,.docx,.txt"></label>
+          <section class="p0DraftSection">
+            <label>AI-tailored cover letter (review before attachment)
+              <textarea id="assistGeneratedLetter" class="p0LetterPreview" placeholder="Preparing a job-specific letter from the verified CV…"></textarea>
+            </label>
+            <label class="checkLabel"><input id="assistIncludeLetter" type="checkbox" checked> Attach the generated letter when the employer requests one</label>
+            <small>Generated text is a draft. Review factual claims before approving submission. A manually selected cover-letter file takes priority.</small>
+          </section>
         </div>
         <button class="primary" type="submit">1. Open Employer in Chromium</button>
       </form>

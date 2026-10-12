@@ -85,3 +85,20 @@ class ApprovedFollowupSend(BaseModel):
     recipient: str = Field(min_length=5, max_length=254)
     subject: str = Field(min_length=3, max_length=240)
     body: str = Field(min_length=10, max_length=12000)
+
+class CandidateProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    firstName: str = Field("", max_length=120)
+    lastName: str = Field("", max_length=120)
+    phone: str = Field("", max_length=80)
+    city: str = Field("", max_length=120)
+    country: str = Field("", max_length=120)
+    linkedin: str = Field("", max_length=250)
+    github: str = Field("", max_length=250)
+    portfolio: str = Field("", max_length=250)
+    education: str = Field("", max_length=1500)
+    employment: str = Field("", max_length=4000)
+    languages: str = Field("", max_length=500)
+
+class CoverLetterDraft(BaseModel):
+    text: str = Field(min_length=80, max_length=12000)

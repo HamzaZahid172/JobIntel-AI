@@ -93,3 +93,24 @@ test("Ashby screenshot-style file input label proves existing attachment",()=>{
   assert.equal(uploadFieldComplete(field,{cv:{name:"Hamza_Zahid_Butt-CV.pdf"}}),true);
   assert.equal(uploadFieldComplete({...field,label:"Resume* Upload file"}, {cv:{name:"Hamza_Zahid_Butt-CV.pdf"}}),false);
 });
+
+test("JobIntel fills approved location and country but not protected screening fields",()=>{
+  const profile={city:"Ilmenau",country:"Germany",email:"person@example.com"};
+  assert.deepEqual(
+    fieldValue({name:"yourLocation",label:"Your Location",tag:"input",type:"text"},profile),
+    {key:"location",value:"Ilmenau, Germany"}
+  );
+  assert.deepEqual(
+    fieldValue({name:"country",label:"Country",tag:"select",type:"select-one"},profile),
+    {key:"country",value:"Germany"}
+  );
+  assert.equal(fieldValue({
+    name:"work_authorization_country",label:"Country of work authorization",tag:"select",type:"select-one"
+  },profile),null);
+  assert.equal(fieldValue({
+    name:"salary_expectation",label:"Expected salary",tag:"input",type:"text"
+  },profile),null);
+  assert.equal(fieldValue({
+    name:"consent",label:"GDPR consent",tag:"input",type:"checkbox"
+  },profile),null);
+});
