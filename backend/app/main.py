@@ -1200,11 +1200,11 @@ def add_collector_target(
     db: Session = Depends(get_db),
 ):
     provider = payload.provider.strip().lower()
-    supported = {"lever", "lever-eu", "smartrecruiters", "ashby"}
+    supported = {"lever", "lever-eu", "smartrecruiters", "ashby", "greenhouse", "personio", "workable"}
     if provider not in supported:
         raise HTTPException(
             400,
-            "Supported providers: lever, lever-eu, smartrecruiters, ashby.",
+            "Supported providers: lever, lever-eu, smartrecruiters, ashby, greenhouse, personio, workable.",
         )
 
     identifier = payload.identifier.strip().strip("/")
@@ -1212,6 +1212,8 @@ def add_collector_target(
         identifier = identifier.split("jobs.ashbyhq.com/", 1)[1].split("/", 1)[0]
     if not identifier:
         raise HTTPException(400, "Company/job-board identifier is required.")
+    if provider in {"personio", "workable"} and not re.fullmatch(r"[A-Za-z0-9-]{1,100}", identifier):
+        raise HTTPException(400, "Personio and Workable require a company slug, not a full URL.")
 
     existing = (
         db.query(CollectorTarget)
