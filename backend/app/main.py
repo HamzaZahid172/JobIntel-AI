@@ -312,6 +312,8 @@ def build_source_analytics(
         ("Lever", "Employer ATS", False),
         ("SmartRecruiters", "Employer ATS", False),
         ("Greenhouse", "Employer ATS", False),
+        ("Personio", "Employer ATS", False),
+        ("Workable", "Employer ATS", False),
     ]
 
     last_sync_by_source = {}
@@ -769,6 +771,8 @@ def sources(user: User = Depends(get_current_user)):
             {"name": "SmartRecruiters", "mode": "Public employer postings", "status": "configurable"},
             {"name": "Ashby", "mode": "Public Job Postings API", "status": "configurable"},
             {"name": "Greenhouse", "mode": "Public Job Board API", "status": "configurable"},
+            {"name": "Personio", "mode": "Public company XML feed", "status": "configurable"},
+            {"name": "Workable", "mode": "Public company Jobs API", "status": "configurable"},
             {"name": "Manual / Bulk Import", "mode": "Normalized external jobs", "status": "active"},
         ],
         "planned": [
