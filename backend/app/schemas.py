@@ -107,3 +107,7 @@ class CoverLetterDraft(BaseModel):
 class InterviewAnswer(BaseModel):
     question_index: int = Field(ge=0,le=50)
     answer: str = Field(min_length=20,max_length=6000)
+
+
+class GoogleLoginExchange(BaseModel):
+    ticket: str = Field(min_length=40,max_length=250)

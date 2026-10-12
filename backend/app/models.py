@@ -196,3 +196,32 @@ class InterviewPractice(Base):
     answers_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GoogleLoginState(Base):
+    __tablename__ = "google_login_states"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    state: Mapped[str] = mapped_column(String(150), unique=True, index=True)
+    nonce: Mapped[str] = mapped_column(String(150))
+    link_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GoogleLoginIdentity(Base):
+    __tablename__ = "google_login_identities"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    google_subject: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    google_email: Mapped[str] = mapped_column(String(255))
+    linked_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class GoogleLoginTicket(Base):
+    """One-time short-lived exchange token, never a persistent bearer session."""
+    __tablename__ = "google_login_tickets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
