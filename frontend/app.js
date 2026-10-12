@@ -17,6 +17,9 @@ let currentRoute = 'dashboard';
 let jobMarketCache = [];
 let showRejectedApplications = false;
 let assistantStatusTimer = null;
+let dashboardPoller = null;
+let dashboardLoadPromise = null;
+let lastDashboardCheck = 0;
 let gmailStatusWatcher = null;
 let observedGmailSyncTime = null;
 let gmailStatusCheckInFlight = false;
@@ -75,32 +78,60 @@ function humanRoleFamily(value) {
   }[value] || value;
 }
 
-async function load() {
+async function load(){
+  if(dashboardLoadPromise)return dashboardLoadPromise;
+  dashboardLoadPromise=renderDashboardData();
+  try{
+    await dashboardLoadPromise;
+  }catch(err){
+    const line=document.querySelector('#dashboardRefreshStatus');
+    if(line && currentRoute==='dashboard')line.textContent='Dashboard refresh failed: '+err.message+' · Showing previously loaded values.';
+    throw err;
+  }finally{
+    dashboardLoadPromise=null;
+  }
+}
+
+async function renderDashboardData() {
   const d = await apiFetch('/api/dashboard');
+  lastDashboardCheck=Date.now();
+  const statusLine=document.querySelector('#dashboardRefreshStatus');
+  if(statusLine && currentRoute==='dashboard'){
+    statusLine.textContent='Dashboard checked '+new Date(lastDashboardCheck).toLocaleTimeString()+' · Auto-refresh every 45 seconds while this tab is active. Job feeds require separate manual refresh.';
+  }
   const s = d.summary;
 
   const sourceText = Object.entries(d.market.sources || {}).map(([k,v]) => `${k}: ${v}`).join(' · ');
   const atsConfigured = (d.market.source_analytics || []).filter(function(x){
     return x.mode === 'Employer ATS' && x.status === 'configured';
   }).length;
+  const syncedAt=d.market.last_sync?new Date(d.market.last_sync).getTime():0;
+  const marketStale=!syncedAt || Date.now()-syncedAt>12*60*60*1000;
   document.querySelector('#marketStatus').textContent =
     d.market.live
       ? (d.cv.uploaded
           ? `CV-filtered market · ${d.market.relevant_jobs} relevant of ${d.market.total_jobs} tracked · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`
           : `Live PostgreSQL snapshot · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`)
-      : 'No live jobs stored yet. Click “Refresh Current Jobs”.';
+      : 'No stored jobs yet. Click “Refresh Current Jobs”.';
+  if(d.market.live && marketStale){
+    document.querySelector('#marketStatus').textContent += ' · Cached jobs may be stale; refresh sources when ready.';
+  }
 
   const atsValue = s.ats_score == null ? '—' : `${Math.round(s.ats_score)} / 100`;
+  const statuses=d.pipeline || {};
+  const awaiting=(statuses.Applied||0)+(statuses.Screening||0);
   const metrics = [
-    ['💼', d.cv.uploaded ? 'CV-Relevant Jobs' : 'Tracked Live Jobs', s.active_jobs, d.cv.uploaded ? `Filtered from ${s.total_market_jobs} live jobs` : 'Current feed snapshot'],
-    ['🆕','Posted Today',s.new_today,d.cv.uploaded ? 'Relevant to your profile' : 'Based on source timestamps'],
-    ['➤','Applications',s.applications,'Your manual tracker'],
-    ['👥','Interviews',s.interviews,'From your tracker'],
-    ['🏆','Offers',s.offers,'From your tracker'],
-    ['▤','ATS Readiness',atsValue,d.cv.uploaded ? `✓ ${d.cv.ats.status}` : 'Upload CV to calculate'],
+    ['💼', d.cv.uploaded ? 'Relevant Jobs' : 'Tracked Jobs', s.active_jobs, `From ${s.total_market_jobs} stored vacancies`],
+    ['🆕', 'Posted Today', s.new_today, 'Based on available posting dates'],
+    ['➤', 'Applications Tracked', s.applications, 'Including closed / rejected records'],
+    ['✉', 'Awaiting Replies', awaiting, 'Applied or screening'],
+    ['👥', 'Interview Stages', s.interviews, 'Interview, final and offers'],
+    ['↘', 'Rejections', statuses.Rejected||0, 'Kept in application history'],
+    ['🏆', 'Offers', s.offers, 'Confirmed tracker status'],
+    ['▤', 'ATS Readiness', atsValue, d.cv.uploaded ? `✓ ${d.cv.ats.status}` : 'Upload CV to calculate'],
   ];
   document.querySelector('#metrics').innerHTML = metrics.map((m,i)=>`
-    <div class="metric card ${i===5?'atsMini':''}">
+    <div class="metric card ${i===7?'atsMini':i===5?'dashboardMetricBad':''}">
       <div class="metricIcon">${m[0]}</div>
       <div><small>${m[1]}</small><b>${m[2]}</b><span>${esc(m[3])}</span></div>
     </div>`).join('');
@@ -157,8 +188,8 @@ async function load() {
   }
 
   document.querySelector('#pipeline').innerHTML =
-    `<div class="panelHead"><h3>Application Pipeline</h3><span class="pill info">✎ Manual tracking</span></div>
-     <div class="pipeline">${['Saved','Applied','Screening','Interview','Final','Offer'].map(x=>`
+    `<div class="panelHead"><h3>Application Pipeline</h3><span class="pill info">Gmail + manual statuses</span></div>
+     <div class="pipeline">${['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(x=>`
        <div><div class="dot">${d.pipeline[x]||0}</div><small>${x}</small></div>`).join('')}</div>
      <button id="addApp" class="primary">＋ Add application</button>`;
 
