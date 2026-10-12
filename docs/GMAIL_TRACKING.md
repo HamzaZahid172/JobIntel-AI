@@ -59,3 +59,11 @@ Scheduled checks scan up to 300 recent messages, using a 45-day lookback for the
 4. Click Show rejected to verify OMMAX is Rejected with a Gmail signal.
 5. Leave Docker running to detect later updates automatically.
 6. If needed, inspect docker compose logs --tail=100 backend for OAuth or network errors.
+
+## Targeted Gmail outcome discovery and rejection review
+
+When a general Gmail inbox contains hundreds of recent messages, relevant employer replies can fall outside the 300-message scan cap. JobIntel now also searches Gmail directly by company name for up to 12 recent open employers per scan, fetching up to 30 matching messages per employer and 150 *additional* unique messages in total. Trash is included, spam excluded. These results are matched to the correct application with existing safeguards. This increases the chance of finding an OMMAX-type rejection without requiring a manual email upload.
+
+In **My Applications**, use the recent-rejection banner or **Show rejected → Review rejection** to view a source-grounded summary of the original employer email, a limited excerpt and practical suggestions. The backend retrieves the original rejection body on request with the already-authorized Gmail read-only scope. It does not archive the full email body in JobIntel. Recommendations do not claim an undisclosed ATS failure or a specific CV mistake.
+
+This is best-effort Gmail polling, not an instantaneous Google notification. The local Docker backend must run, and the Gmail token must be valid. When debugging use My Applications → Sync Gmail and inspect the listed / matched / updated counts, then Docker backend logs. Authentication failures or unmatched company evidence still require investigation.
