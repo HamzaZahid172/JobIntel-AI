@@ -8,6 +8,7 @@ const navItems = [
   {route:'ats', label:'▤ ATS CV Check'},
   {route:'matches', label:'♡ Matches'},
   {route:'application-prep', label:'▣ Application Prep'},
+  {route:'interview-prep', label:'🎤 Interview Practice'},
   {route:'skill-gap', label:'▥ Skill Gap'},
   {route:'analytics', label:'▧ Analytics'},
   {route:'settings', label:'⚙ Settings'}
@@ -110,7 +111,7 @@ async function renderDashboardData() {
   document.querySelector('#marketStatus').textContent =
     d.market.live
       ? (d.cv.uploaded
-          ? `CV-filtered market · ${d.market.relevant_jobs} relevant of ${d.market.total_jobs} tracked · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`
+          ? `CV-filtered market · ${d.market.relevant_jobs} relevant of ${d.market.total_jobs} tracked · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured} · Last sync ${fmtDate(d.market.last_sync)}`
           : `Live PostgreSQL snapshot · ${sourceText || 'Current feeds'} · ATS sources configured: ${atsConfigured}/3 · Last sync ${fmtDate(d.market.last_sync)}`)
       : 'No stored jobs yet. Click “Refresh Current Jobs”.';
   if(d.market.live && marketStale){
@@ -483,6 +484,7 @@ async function routeTo(route, updateHash=true){
     ats:['ATS CV Check','CV readiness, skills and role profile'],
     matches:['Best Matches','Current jobs ranked against your CV'],
     'application-prep':['Application Preparation','Prepared application packages, screening answers and CV-grounded cover letters'],
+    'interview-prep':['Interview Practice','Practice technical and behavioral questions tailored to your CV and vacancies'],
     'skill-gap':['Skill Gap','What current target jobs ask for that your CV is missing'],
     analytics:['Analytics','Your application and market performance'],
     settings:['Settings','Profile, AI assistant and data sources']
@@ -511,6 +513,7 @@ async function routeTo(route, updateHash=true){
   if(route==='matches') return renderMatchesPage();
   if(route==='application-prep') return renderApplicationPrepPage();
   if(route==='skill-gap') return renderSkillGapPage();
+  if(route==='interview-prep') return renderInterviewPracticePage();
   if(route==='analytics') return renderAnalyticsPage();
   if(route==='settings') return renderSettingsPage();
 }
@@ -539,12 +542,25 @@ function jobCard(job, compact){
       '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
       '<button class="primary guidedApplyBtn" data-job-id="' + job.id + '">Assisted Apply</button>' +
       '<button class="secondary atsReviewBtn" data-job-id="' + job.id + '">ATS Review</button>' +
+      '<button class="secondary startPracticeBtn" data-job-id="' + job.id + '">Interview Prep</button>' +
       '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
       '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
     '</div></article>';
 }
 
 function bindTrackButtons(){
+  document.querySelectorAll('.startPracticeBtn').forEach(function(button){
+    button.onclick=async function(){
+      button.disabled=true;
+      button.textContent='Preparing questions…';
+      try{
+        const item=await apiFetch('/api/jobs/'+button.dataset.jobId+'/interview-practice',{method:'POST'});
+        await routeTo('interview-prep');
+        await openInterviewPractice(item.id);
+      }catch(err){alert('Could not start interview practice: '+err.message);}
+      finally{button.disabled=false;button.textContent='Interview Prep';}
+    };
+  });
   document.querySelectorAll('.guidedApplyBtn').forEach(function(button){
     button.onclick=function(){
       const job=jobMarketCache.find(function(item){return String(item.id)===String(button.dataset.jobId);});
@@ -1422,8 +1438,65 @@ async function renderSkillGapPage(){
     '</div>';
 }
 
+async function openInterviewPractice(practiceId){
+  const practice=await apiFetch('/api/interview-practice/'+practiceId);
+  if(currentRoute!=='interview-prep')return;
+  const holder=document.querySelector('#interviewPracticeWorkspace');
+  if(!holder)return;
+  holder.innerHTML='<div class="card detailPage"><h3>'+esc(practice.job_title)+' · '+esc(practice.company)+'</h3>'+
+    '<p class="muted">Practice prompts based on your job description and saved CV. This is coaching, not an employer test.</p>'+
+    (practice.questions||[]).map(function(q,i){
+      const completed=practice.answers[String(i)];
+      return '<form class="interviewAnswerForm" data-session="'+practice.id+'" data-index="'+i+'">'+
+        '<label><b>'+(i+1)+'. '+esc(q.question)+'</b>'+
+        '<small>'+esc(q.topic)+' · Job skills: '+(q.relevant_job_skills||[]).map(esc).join(', ')+'</small>'+
+        '<textarea name="answer" rows="5" maxlength="6000" minlength="20" required placeholder="Explain a real example with your contribution and result.">'+esc(completed&&completed.answer||'')+'</textarea></label>'+
+        '<button type="submit" class="secondary">Save answer & get coaching</button>'+
+        '<div class="interviewAnswerFeedback" aria-live="polite">'+
+        (completed?'<p>'+completed.feedback.feedback.map(esc).join(' · ')+'</p>':'')+'</div></form>';
+    }).join('')+'</div>';
+  holder.querySelectorAll('.interviewAnswerForm').forEach(function(form){
+    form.onsubmit=async function(event){
+      event.preventDefault();
+      const btn=form.querySelector('button[type=submit]');
+      btn.disabled=true;
+      try{
+        const result=await apiFetch('/api/interview-practice/'+form.dataset.session+'/answer',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({question_index:Number(form.dataset.index),answer:form.elements.answer.value})
+        });
+        form.querySelector('.interviewAnswerFeedback').innerHTML='<b>Feedback:</b> '+
+          (result.feedback.feedback||[]).map(esc).join(' · ')+
+          '<p class="muted">'+esc(result.feedback.disclaimer)+'</p>';
+      }catch(err){alert('Interview answer could not be saved: '+err.message);}
+      finally{btn.disabled=false;}
+    };
+  });
+}
+
+async function renderInterviewPracticePage(){
+  const sessions=await apiFetch('/api/interview-practice');
+  const holder=document.querySelector('#pageContent');
+  holder.innerHTML='<div class="pageIntro"><h2>Interview Practice</h2>'+
+    '<p>Prepare from the actual employer job description and your saved CV. Practice in English, save answers, and get structured feedback. Questions are representative, not leaked employer questions.</p></div>'+
+    '<div class="card detailPage"><h3>Start with a suitable vacancy</h3>'+
+    '<p>Go to Job Market or Action Center, choose a role and click <b>Interview Prep</b>. Previous practice sessions appear below.</p>'+
+    '<button id="interviewOpenJobs" class="secondary">Browse suitable jobs</button></div>'+
+    '<div class="card detailPage"><h3>Saved practice sessions</h3>'+
+    (sessions.length?sessions.map(function(s){
+      return '<div class="analyticsRow"><span>Session #'+s.id+' · '+s.answers_count+
+        '/'+s.questions_count+' answers · '+esc(s.created_at.slice(0,10))+'</span>'+
+        '<button type="button" class="secondary loadPracticeBtn" data-id="'+s.id+'">Resume</button></div>';
+    }).join(''):'<p>No practice sessions yet.</p>')+'</div>'+
+    '<div id="interviewPracticeWorkspace"></div>';
+  document.querySelector('#interviewOpenJobs').onclick=function(){routeTo('job-market');};
+  document.querySelectorAll('.loadPracticeBtn').forEach(function(b){
+    b.onclick=function(){openInterviewPractice(b.dataset.id).catch(e=>alert(e.message));};
+  });
+}
+
 async function renderAnalyticsPage(){
-  const d=await apiFetch('/api/dashboard');
+  const [d,conversion]=await Promise.all([apiFetch('/api/dashboard'),apiFetch('/api/analytics/conversion')]);
   const sourceAnalytics=d.market.source_analytics||[];
   const sourceRows=sourceAnalytics.map(function(s){
     const statusClass=s.status==='active'||s.status==='configured'?'good':'warn';
@@ -1444,9 +1517,21 @@ async function renderAnalyticsPage(){
     '<div class="analyticsSummary">'+
       '<div class="card analyticsMini"><small>Total tracked jobs</small><b>'+d.market.total_jobs+'</b></div>'+
       '<div class="card analyticsMini"><small>CV-relevant jobs</small><b>'+d.market.relevant_jobs+'</b></div>'+
-      '<div class="card analyticsMini"><small>ATS sources configured</small><b>'+configuredAts+'/3</b></div>'+
+      '<div class="card analyticsMini"><small>ATS sources configured</small><b>'+configuredAts+'</b></div>'+
       '<div class="card analyticsMini"><small>ATS jobs collected</small><b>'+atsJobs+'</b></div>'+
     '</div>'+
+    '<div class="card detailPage"><h2>Application conversion by role</h2><p>'+esc(conversion.interpretation)+'</p>'+
+      Object.entries(conversion.by_role||{}).map(function(row){
+        return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+
+          row[1].applications+' applications · '+row[1].interviews_or_later+
+          ' interview-stage · '+row[1].rejected+' rejected</span></div>';
+      }).join('')+
+    '</div>'+
+    '<div class="card detailPage"><h2>CV version performance</h2>'+
+      Object.entries(conversion.by_cv_version||{}).map(function(row){
+        return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+
+          row[1].applications+' apps · '+row[1].interviews_or_later+' interview-stage</span></div>';
+      }).join('')+'</div>'+
     '<div class="analyticsGrid">'+
       '<div class="card detailPage"><h2>Application funnel</h2>'+Object.entries(d.pipeline).map(function(row){return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+row[1]+'</span></div>';}).join('')+'</div>'+
       '<div class="card detailPage sourceAnalyticsCard"><div class="panelHead"><h2>Job sources</h2><button id="configureSources" class="secondary">Configure ATS</button></div>'+
@@ -1524,9 +1609,9 @@ async function renderSettingsPage(){
       '</div>' +
       '<div class="card detailPage atsTargets">' +
         '<h2>Direct employer ATS collectors</h2>' +
-        '<p>Configure employers using Greenhouse, Lever, SmartRecruiters or Ashby. Refresh Current Jobs will pull public postings, keep Germany/remote-EU technical roles, and put them into the same CV-matching pipeline.</p>' +
+        '<p>Configure employers using Greenhouse, Lever, SmartRecruiters, Ashby, Personio or Workable. Refresh Current Jobs will pull public postings, keep Germany/remote-EU technical roles, and put them into the same CV-matching pipeline.</p>' +
         '<form id="collectorTargetForm" class="collectorForm">' +
-          '<label>Provider<select name="provider"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever (global)</option><option value="lever-eu">Lever (EU)</option><option value="smartrecruiters">SmartRecruiters</option></select></label>' +
+          '<label>Provider<select name="provider"><option value="greenhouse">Greenhouse</option><option value="ashby">Ashby</option><option value="lever">Lever (global)</option><option value="lever-eu">Lever (EU)</option><option value="smartrecruiters">SmartRecruiters</option><option value="personio">Personio</option><option value="workable">Workable</option></select></label>' +
           '<label>Company label<input name="label" placeholder="Company name" required></label>' +
           '<label>Job board / company identifier<input name="identifier" placeholder="Greenhouse: board token · Ashby: final URL segment" required></label>' +
           '<button class="primary" type="submit">Add collector</button>' +
