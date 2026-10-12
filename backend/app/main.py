@@ -52,7 +52,7 @@ from .intelligence import (
 )
 from .match_layer import build_match_report
 from .rejection_insights import rejection_review
-from .gmail_sync import GMAIL_API, _message_body_text, ensure_access_token
+from .gmail_sync import GMAIL_API, _message_body_text, ensure_access_token, classify_message, _gmail_headers, rejection_evidence
 from .gmail_worker import start_gmail_worker
 from .gmail_sync import (
     build_authorization_url,
@@ -1556,15 +1556,33 @@ def review_application_rejection(
     except (httpx.HTTPError, RuntimeError) as exc:
         logger.warning("Could not retrieve rejection review email for user %s", user.id)
         raise HTTPException(502, "Could not read the original Gmail rejection. Verify Gmail connection and try again.") from exc
-    body = _message_body_text(response.json()) or event.snippet or ""
-    review = rejection_review(body, event.subject)
+    original = response.json()
+    headers = _gmail_headers(original)
+    original_subject = headers.get("subject") or event.subject
+    original_sender = headers.get("from") or event.sender
+    body = _message_body_text(original) or original.get("snippet") or event.snippet or ""
+    verified_evidence = rejection_evidence(original_subject, body)
+    if not verified_evidence or classify_message(original_subject, body) != "Rejected":
+        return {
+            "application_id": app_item.id,
+            "company": app_item.company,
+            "status": app_item.status,
+            "reason_available": False,
+            "source_subject": original_subject,
+            "source_sender": original_sender,
+            "message": "This original email does not contain a confirmed rejection. JobIntel will re-check the recorded status automatically; refresh My Applications to see the correction.",
+        }
+    review = rejection_review(body, original_subject)
     return {
         "application_id": app_item.id,
         "company": app_item.company,
         "role": app_item.role,
         "status": app_item.status,
         "reason_available": True,
+        "source_subject": original_subject,
+        "source_sender": original_sender,
         "gmail_received_at": event.received_at.isoformat() if event.received_at else None,
+        "confirmed_rejection_excerpt": verified_evidence,
         **review,
     }
 
