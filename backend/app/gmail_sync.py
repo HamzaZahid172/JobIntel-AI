@@ -450,6 +450,35 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
             break
         page_token = next_page
 
+    # High-priority employer search: recent application outcomes must not be
+    # buried behind a 300-message general inbox limit.
+    targeted_listed = 0
+    recent_cutoff = datetime.utcnow().date() - timedelta(days=60)
+    company_queries: set[str] = set()
+    for app in applications:
+        if app.status in {"Rejected", "Offer"} or (app.applied_date and app.applied_date < recent_cutoff):
+            continue
+        company = re.sub(r"[^a-zA-Z0-9 äöüÄÖÜß&.-]", "", app.company or "").strip()
+        if len(company) < 3 or company.casefold() in company_queries:
+            continue
+        company_queries.add(company.casefold())
+        if len(company_queries) > 12:
+            break
+        query = f'in:anywhere -in:spam newer_than:45d "{company}"'
+        targeted = httpx.get(
+            f"{GMAIL_API}/users/me/messages",
+            headers=headers,
+            params={"q": query, "maxResults": 30, "includeSpamTrash": True},
+            timeout=20,
+        )
+        targeted.raise_for_status()
+        for item in targeted.json().get("messages", []):
+            message_id = item.get("id")
+            if message_id and message_id not in seen_ids and targeted_listed < 150:
+                seen_ids.add(message_id)
+                message_ids.append(message_id)
+                targeted_listed += 1
+
     scanned = matched = updated = events_created = 0
     outcomes: dict[str, int] = {}
 
@@ -534,6 +563,7 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
     return {
         "scanned": scanned,
         "listed": len(message_ids),
+        "targeted_listed": targeted_listed,
         "matched": matched,
         "updated": updated,
         "events": events_created,
