@@ -133,3 +133,6 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .followupContactOption small{flex:1;min-width:min(180px,100%);overflow-wrap:anywhere;line-height:1.5}
 .followupContactOption button{font-size:11px}
 .followupContactOption a,.followupGoogleLink{color:#125eac;text-decoration:underline;font-size:11px;overflow-wrap:anywhere}
+
+.gmailRejectionNotice{margin:12px 0;padding:15px 18px;border-left:4px solid #d97706;background:#fffaf0;line-height:1.5}
+.gmailRejectionNotice p{margin:4px 0 0;font-size:13px;color:#65523d}
