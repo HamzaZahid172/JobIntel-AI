@@ -20,6 +20,8 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 
 from .assistant import answer, assistant_status
+from .interview_practice import question_bank, answer_feedback
+from .conversion_analytics import application_analytics
 from .ats_simulator import ats_review as evaluate_cv_ats
 from .application_preparation import build_application_package_payload
 from .followup_contacts import discover_contact
@@ -72,6 +74,7 @@ from .gmail_sync import (
 from .models import (
     Application,
     ApplicationPackage,
+    InterviewPractice,
     CVProfile,
     CandidateDocument,
     CandidateProfile,
@@ -91,6 +94,7 @@ from .schemas import (
     ApprovedFollowupSend,
     ApplicationPackageAnswerUpdate,
     ApplicationPreparationRequest,
+    InterviewAnswer,
     ApplicationUpdate,
     AssistantRequest,
     BulkJobImport,
@@ -308,6 +312,8 @@ def build_source_analytics(
         ("Lever", "Employer ATS", False),
         ("SmartRecruiters", "Employer ATS", False),
         ("Greenhouse", "Employer ATS", False),
+        ("Personio", "Employer ATS", False),
+        ("Workable", "Employer ATS", False),
     ]
 
     last_sync_by_source = {}
@@ -765,6 +771,8 @@ def sources(user: User = Depends(get_current_user)):
             {"name": "SmartRecruiters", "mode": "Public employer postings", "status": "configurable"},
             {"name": "Ashby", "mode": "Public Job Postings API", "status": "configurable"},
             {"name": "Greenhouse", "mode": "Public Job Board API", "status": "configurable"},
+            {"name": "Personio", "mode": "Public company XML feed", "status": "configurable"},
+            {"name": "Workable", "mode": "Public company Jobs API", "status": "configurable"},
             {"name": "Manual / Bulk Import", "mode": "Normalized external jobs", "status": "active"},
         ],
         "planned": [
@@ -843,6 +851,109 @@ def import_job(
     cv = latest_cv(db, user.id)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
+
+
+@app.get("/api/analytics/conversion")
+def application_conversion_report(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    apps=db.query(Application).filter(Application.user_id == user.id).all()
+    return application_analytics(apps)
+
+
+@app.post("/api/jobs/{job_id}/interview-practice")
+def start_interview_practice(
+    job_id: int, user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    job=db.get(LiveJob,job_id)
+    if job is None:
+        raise HTTPException(404,"Job not found.")
+    cv=latest_cv(db,user.id)
+    if cv is None:
+        raise HTTPException(400,"Upload a CV before starting interview practice.")
+    questions=question_bank(job.title,job.description,cv.text)
+    item=InterviewPractice(
+        user_id=user.id,live_job_id=job.id,cv_profile_id=cv.id,
+        questions_json=json.dumps(questions),answers_json="{}"
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return {
+        "id":item.id,"job_title":job.title,"company":job.company,
+        "questions":questions,"answers":{},"created_at":item.created_at.isoformat(),
+        "disclaimer":"Practice based on your selected job description and CV, not the employer's actual questions.",
+    }
+
+
+@app.get("/api/interview-practice")
+def list_interview_practices(
+    user: User = Depends(get_current_user), db: Session = Depends(get_db)
+):
+    sessions=db.query(InterviewPractice).filter(
+        InterviewPractice.user_id==user.id
+    ).order_by(InterviewPractice.updated_at.desc()).limit(25).all()
+    return [
+        {"id":s.id,"job_id":s.live_job_id,
+         "created_at":s.created_at.isoformat(),
+         "questions_count":len(json.loads(s.questions_json or "[]")),
+         "answers_count":len(json.loads(s.answers_json or "{}"))}
+        for s in sessions
+    ]
+
+
+@app.get("/api/interview-practice/{practice_id}")
+def get_interview_practice(
+    practice_id: int,user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    session=db.query(InterviewPractice).filter(
+        InterviewPractice.id==practice_id,
+        InterviewPractice.user_id==user.id
+    ).first()
+    if session is None:
+        raise HTTPException(404,"Interview practice session not found.")
+    job=db.get(LiveJob,session.live_job_id)
+    return {
+        "id":session.id, "job_title":job.title if job else "Saved vacancy",
+        "company":job.company if job else "Employer",
+        "questions":json.loads(session.questions_json or "[]"),
+        "answers":json.loads(session.answers_json or "{}"),
+        "created_at":session.created_at.isoformat(),
+    }
+
+
+@app.post("/api/interview-practice/{practice_id}/answer")
+def submit_interview_practice_answer(
+    practice_id: int,payload: InterviewAnswer,
+    user: User = Depends(get_current_user),db: Session = Depends(get_db)
+):
+    session=db.query(InterviewPractice).filter(
+        InterviewPractice.id==practice_id,
+        InterviewPractice.user_id==user.id
+    ).first()
+    if session is None:
+        raise HTTPException(404,"Interview practice session not found.")
+    questions=json.loads(session.questions_json or "[]")
+    if payload.question_index<0 or payload.question_index>=len(questions):
+        raise HTTPException(400,"Invalid question index.")
+    cv=db.query(CVProfile).filter(
+        CVProfile.id==session.cv_profile_id,CVProfile.user_id==user.id
+    ).first()
+    if cv is None:
+        raise HTTPException(409,"Your saved CV version is no longer available.")
+    try:
+        feedback=answer_feedback(questions[payload.question_index],payload.answer,cv.text)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+    answers=json.loads(session.answers_json or "{}")
+    answers[str(payload.question_index)]={"answer":payload.answer,"feedback":feedback}
+    session.answers_json=json.dumps(answers)
+    session.updated_at=datetime.utcnow()
+    db.commit()
+    return {"question_index":payload.question_index,"feedback":feedback,
+            "saved":True}
 
 
 @app.get("/api/action-center")
@@ -1200,11 +1311,11 @@ def add_collector_target(
     db: Session = Depends(get_db),
 ):
     provider = payload.provider.strip().lower()
-    supported = {"lever", "lever-eu", "smartrecruiters", "ashby"}
+    supported = {"lever", "lever-eu", "smartrecruiters", "ashby", "greenhouse", "personio", "workable"}
     if provider not in supported:
         raise HTTPException(
             400,
-            "Supported providers: lever, lever-eu, smartrecruiters, ashby.",
+            "Supported providers: lever, lever-eu, smartrecruiters, ashby, greenhouse, personio, workable.",
         )
 
     identifier = payload.identifier.strip().strip("/")
@@ -1212,6 +1323,8 @@ def add_collector_target(
         identifier = identifier.split("jobs.ashbyhq.com/", 1)[1].split("/", 1)[0]
     if not identifier:
         raise HTTPException(400, "Company/job-board identifier is required.")
+    if provider in {"personio", "workable"} and not re.fullmatch(r"[A-Za-z0-9-]{1,100}", identifier):
+        raise HTTPException(400, "Personio and Workable require a company slug, not a full URL.")
 
     existing = (
         db.query(CollectorTarget)

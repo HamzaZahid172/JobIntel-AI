@@ -190,3 +190,11 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 
 /* Keep a readable single-column summary on narrow screens. */
 @media(max-width:760px){.metrics{grid-template-columns:1fr}.headerActions{gap:6px}#refreshDashboard{font-size:12px}}
+
+.interviewAnswerForm{padding:16px 0;border-top:1px solid #e2e9f2;display:grid;gap:10px}
+.interviewAnswerForm label{display:grid;gap:8px}
+.interviewAnswerForm small{color:#667e98}
+.interviewAnswerForm textarea{width:100%;resize:vertical;min-height:110px}
+.interviewAnswerForm .secondary{justify-self:start}
+.interviewAnswerFeedback{color:#205575;font-size:13px;line-height:1.65}
+.eligibilityLine{font-size:12px;color:#2b506a;margin:8px 0}

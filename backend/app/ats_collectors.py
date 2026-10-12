@@ -1,4 +1,6 @@
 import logging
+import re
+from xml.etree import ElementTree as ET
 from datetime import datetime
 
 import httpx
@@ -26,6 +28,8 @@ PROVIDER_SOURCE = {
     "smartrecruiters": "SmartRecruiters",
     "ashby": "Ashby",
     "greenhouse": "Greenhouse",
+    "personio": "Personio",
+    "workable": "Workable",
 }
 
 
@@ -236,6 +240,82 @@ def fetch_greenhouse(client: httpx.Client, target: CollectorTarget) -> list[dict
 
     return jobs
 
+
+def _safe_board_slug(identifier: str) -> str:
+    slug=identifier.strip().lower()
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,98}[a-z0-9])?",slug):
+        raise ValueError("Company board must be a public ATS slug, not a URL.")
+    return slug
+
+
+def fetch_personio(client: httpx.Client, target: CollectorTarget) -> list[dict]:
+    slug=_safe_board_slug(target.identifier)
+    response=client.get(
+        f"https://{slug}.jobs.personio.de/xml",
+        params={"language":"en"},
+        headers={"Accept":"application/xml"},
+    )
+    response.raise_for_status()
+    # Keep untrusted XML bounded. Reject DTD/entity declarations.
+    if len(response.content)>2_000_000 or b"<!DOCTYPE" in response.content.upper() or b"<!ENTITY" in response.content.upper():
+        raise ValueError("Unsafe Personio XML feed.")
+    root=ET.fromstring(response.content)
+    jobs=[]
+    for item in root.findall(".//position"):
+        title=(item.findtext("name") or "").strip()
+        location=(item.findtext("office") or "Germany").strip()
+        parts=[(node.findtext("value") or "") for node in item.findall(".//jobDescription")]
+        description=strip_html(" ".join(parts))
+        remote="remote" in location.lower()
+        if not is_target_technical_role(title, description) or not _germany_or_remote_eu(location,remote):
+            continue
+        job_id=(item.findtext("id") or "").strip()
+        if not job_id.isdecimal():
+            continue
+        jobs.append({
+            "source":"Personio", "source_id":f"{slug}:{job_id}",
+            "title":title, "company":target.label, "location":location,
+            "remote":remote, "url":f"https://{slug}.jobs.personio.de/job/{job_id}",
+            "description":description, "skills":extract_skills(title+" "+description),
+            "job_types":[v for v in (item.findtext("employmentType"),item.findtext("schedule")) if v],
+            "posted_at":parse_timestamp(item.findtext("createdAt")),
+        })
+    return jobs
+
+
+def fetch_workable(client: httpx.Client, target: CollectorTarget) -> list[dict]:
+    slug=_safe_board_slug(target.identifier)
+    response=client.get(
+        f"https://www.workable.com/api/accounts/{slug}",
+        params={"details":"true"},
+        headers={"Accept":"application/json"},
+    )
+    response.raise_for_status()
+    payload=response.json()
+    items=payload.get("jobs") or [] if isinstance(payload,dict) else payload
+    jobs=[]
+    for item in items:
+        title=item.get("title") or ""
+        description=strip_html(item.get("description") or "")
+        country=item.get("country") or ""
+        location=", ".join(str(v) for v in (item.get("city"),item.get("state"),country) if v) or "Unknown"
+        remote=(item.get("workplace_type") or item.get("workplaceType") or "").lower()=="remote"
+        if not is_target_technical_role(title,description) or not _germany_or_remote_eu(location,remote,country):
+            continue
+        shortcode=item.get("shortcode")
+        if not shortcode:
+            continue
+        jobs.append({
+            "source":"Workable", "source_id":f"{slug}:{shortcode}",
+            "title":title,"company":target.label,"location":location,
+            "remote":remote, "url":item.get("application_url") or item.get("url") or f"https://apply.workable.com/{slug}/j/{shortcode}/",
+            "description":description,"skills":extract_skills(title+" "+description),
+            "job_types":[item.get("employment_type")] if item.get("employment_type") else [],
+            "posted_at":parse_timestamp(item.get("created_at") or item.get("published_on")),
+        })
+    return jobs
+
+
 def _fetch_target(client: httpx.Client, target: CollectorTarget) -> tuple[str, list[dict]]:
     provider = target.provider.lower().strip()
     if provider in {"lever", "lever-eu"}:
@@ -246,6 +326,10 @@ def _fetch_target(client: httpx.Client, target: CollectorTarget) -> tuple[str, l
         return "Ashby", fetch_ashby(client, target)
     if provider == "greenhouse":
         return "Greenhouse", fetch_greenhouse(client, target)
+    if provider == "personio":
+        return "Personio", fetch_personio(client, target)
+    if provider == "workable":
+        return "Workable", fetch_workable(client, target)
     raise ValueError(f"Unsupported provider: {target.provider}")
 
 

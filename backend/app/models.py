@@ -183,3 +183,16 @@ class CandidateProfile(Base):
     user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     profile_json: Mapped[str] = mapped_column(Text, default="{}")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class InterviewPractice(Base):
+    """Private interview-preparation sessions, not actual employer interviews."""
+    __tablename__ = "interview_practices"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    live_job_id: Mapped[int] = mapped_column(Integer, index=True)
+    cv_profile_id: Mapped[int] = mapped_column(Integer)
+    questions_json: Mapped[str] = mapped_column(Text, default="[]")
+    answers_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
