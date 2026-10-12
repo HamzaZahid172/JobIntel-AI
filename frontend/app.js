@@ -1077,7 +1077,7 @@ async function renderApplicationsPage(){
   page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + (showRejectedApplications?' tracked applications':' active applications') + '</b><small>'+rejected.length+' rejected application(s) retained for history and analytics.</small></div><div><button id="toggleRejectedApps" class="secondary">'+(showRejectedApplications?'Hide rejected':'Show rejected ('+rejected.length+')')+'</button> <button id="syncGmailFromApps" class="secondary">Sync Gmail</button> <button id="pageAddApp" class="primary">＋ Add application</button></div></div>' +
     banner +
     '<div class="card tableCard"><table class="dataTable"><thead><tr><th>Role</th><th>Company</th><th>Applied</th><th>Match</th><th>Status</th><th>Gmail signal</th><th>Link</th></tr></thead><tbody>' +
-    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b>'+(a.status==='Rejected'?'<button type="button" class="secondary reviewRejection" data-app-id="'+esc(a.id)+'">Review rejection</button>':'')+'</td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
+    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b>'+(a.status==='Rejected'?'<button type="button" class="secondary reviewRejection" data-app-id="'+esc(a.id)+'">Review rejection</button>':'<button type="button" class="secondary checkApplicationGmail" data-app-id="'+esc(a.id)+'">Check Gmail Status</button>')+'</td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td><select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select></td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
     '</tbody></table></div><section id="rejectionReviewResult" class="card rejectionReviewPanel hidden" aria-live="polite"></section>';
   async function reviewRejection(id){
     const box=document.querySelector('#rejectionReviewResult');
@@ -1121,6 +1121,29 @@ async function renderApplicationsPage(){
       await renderApplicationsPage();
     }catch(err){alert('Gmail sync failed: '+err.message);}
   };
+  document.querySelectorAll('.checkApplicationGmail').forEach(function(button){
+    button.onclick=async function(){
+      const original=button.textContent;
+      button.disabled=true;
+      button.textContent='Checking Gmail...';
+      try{
+        const result=await apiFetch('/api/applications/'+button.dataset.appId+'/sync-gmail-status',{method:'POST'});
+        const summary='Gmail account: '+(result.gmail_account||'unknown')+'\\n'
+          +'Company: '+(result.company||'')+'\\n'
+          +'Status: '+(result.status||'')+'\\n'
+          +'Employer messages found: '+(result.targeted_listed||0)+'\\n'
+          +'Rejection matches: '+(result.outcomes&&result.outcomes.Rejected||0)+'\\n'
+          +'Updated: '+(result.updated||0)+'\\n\\n'
+          +(result.message||'');
+        alert(summary);
+        await renderApplicationsPage();
+      }catch(err){
+        alert('Gmail status check failed: '+err.message+'\\nCheck Settings → Gmail and Docker backend logs.');
+        button.disabled=false;
+        button.textContent=original;
+      }
+    };
+  });
   document.querySelectorAll('.statusSelect').forEach(function(select){
     select.onchange=async function(){
       await apiFetch('/api/applications/'+select.dataset.id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:select.value})});

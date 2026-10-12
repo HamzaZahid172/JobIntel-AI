@@ -385,7 +385,18 @@ def sync_gmail(db: Session, user_id: int, days: int = 45, max_results: int = 300
         return _sync_gmail_impl(db, user_id, days=days, max_results=max_results)
 
 
-def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int = 300) -> dict:
+def sync_application_gmail(db: Session, user_id: int, application_id: int) -> dict:
+    """Targeted user-authorized scan for one tracked application, no full-inbox fetch."""
+    with _SYNC_LOCK:
+        return _sync_gmail_impl(
+            db, user_id, days=45, max_results=20, only_app_id=application_id
+        )
+
+
+def _sync_gmail_impl(
+    db: Session, user_id: int, days: int = 45, max_results: int = 300,
+    only_app_id: int | None = None,
+) -> dict:
     connection = (
         db.query(GmailConnection)
         .filter(GmailConnection.user_id == user_id)
@@ -403,60 +414,26 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
         .order_by(Application.created_at.desc())
         .all()
     )
+    if only_app_id is not None and not any(a.id == only_app_id for a in applications):
+        raise ValueError("Tracked application not found.")
+    target_applications = [
+        a for a in applications if only_app_id is None or a.id == only_app_id
+    ]
     if not applications:
         connection.last_synced_at = datetime.utcnow()
         db.commit()
         return {"scanned": 0, "matched": 0, "updated": 0, "events": 0, "outcomes": {}}
 
-    gmail_query = _gmail_message_query(days)
     message_ids: list[str] = []
     seen_ids: set[str] = set()
-    page_token = None
     max_results = min(max(int(max_results), 1), 500)
-    # Follow nextPageToken; Gmail can return fewer messages than requested.
-    while len(message_ids) < max_results:
-        params = {
-            "q": gmail_query,
-            "maxResults": min(100, max_results - len(message_ids)),
-            "includeSpamTrash": True,
-        }
-        if page_token:
-            params["pageToken"] = page_token
-        listing = httpx.get(
-            f"{GMAIL_API}/users/me/messages",
-            headers=headers,
-            params=params,
-            timeout=20,
-        )
-        if listing.status_code == 401 and connection.refresh_token:
-            _refresh_access_token(connection)
-            db.commit()
-            headers["Authorization"] = f"Bearer {connection.access_token}"
-            listing = httpx.get(
-                f"{GMAIL_API}/users/me/messages",
-                headers=headers,
-                params=params,
-                timeout=20,
-            )
-        listing.raise_for_status()
-        listing_data = listing.json()
-        for item in listing_data.get("messages", []):
-            message_id = item.get("id")
-            if message_id and message_id not in seen_ids:
-                seen_ids.add(message_id)
-                message_ids.append(message_id)
-        next_page = listing_data.get("nextPageToken")
-        if not next_page or next_page == page_token or not listing_data.get("messages"):
-            break
-        page_token = next_page
-
     # High-priority employer search: recent application outcomes must not be
     # buried behind a 300-message general inbox limit.
     targeted_listed = 0
     recent_cutoff = datetime.utcnow().date() - timedelta(days=60)
     company_queries: set[str] = set()
-    for app in applications:
-        if app.status in {"Rejected", "Offer"} or (app.applied_date and app.applied_date < recent_cutoff):
+    for app in target_applications:
+        if only_app_id is None and (app.status in {"Rejected", "Offer"} or (app.applied_date and app.applied_date < recent_cutoff)):
             continue
         company = re.sub(r"[^a-zA-Z0-9 äöüÄÖÜß&.-]", "", app.company or "").strip()
         if len(company) < 3 or company.casefold() in company_queries:
@@ -464,7 +441,7 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
         company_queries.add(company.casefold())
         if len(company_queries) > 12:
             break
-        query = f'in:anywhere -in:spam newer_than:45d "{company}"'
+        query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{company}"'
         targeted = httpx.get(
             f"{GMAIL_API}/users/me/messages",
             headers=headers,
@@ -479,20 +456,67 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
                 message_ids.append(message_id)
                 targeted_listed += 1
 
+    if only_app_id is None:
+        gmail_query = _gmail_message_query(days)
+        page_token = None
+        # Follow nextPageToken; Gmail can return fewer messages than requested.
+        while len(message_ids) < max_results:
+            params = {
+                "q": gmail_query,
+                "maxResults": min(100, max_results - len(message_ids)),
+                "includeSpamTrash": True,
+            }
+            if page_token:
+                params["pageToken"] = page_token
+            listing = httpx.get(
+                f"{GMAIL_API}/users/me/messages",
+                headers=headers,
+                params=params,
+                timeout=20,
+            )
+            if listing.status_code == 401 and connection.refresh_token:
+                _refresh_access_token(connection)
+                db.commit()
+                headers["Authorization"] = f"Bearer {connection.access_token}"
+                listing = httpx.get(
+                    f"{GMAIL_API}/users/me/messages",
+                    headers=headers,
+                    params=params,
+                    timeout=20,
+                )
+            listing.raise_for_status()
+            listing_data = listing.json()
+            for item in listing_data.get("messages", []):
+                message_id = item.get("id")
+                if message_id and message_id not in seen_ids:
+                    seen_ids.add(message_id)
+                    message_ids.append(message_id)
+            next_page = listing_data.get("nextPageToken")
+            if not next_page or next_page == page_token or not listing_data.get("messages"):
+                break
+            page_token = next_page
+
     scanned = matched = updated = events_created = 0
+    classified_messages = unmatched_messages = previously_processed = 0
     outcomes: dict[str, int] = {}
 
     for message_id in message_ids:
         if not message_id:
             continue
-        if (
-            db.query(GmailEvent)
-            .filter(
-                GmailEvent.user_id == user_id,
-                GmailEvent.gmail_message_id == message_id,
-            )
-            .first()
-        ):
+        existing = db.query(GmailEvent).filter(
+            GmailEvent.user_id == user_id,
+            GmailEvent.gmail_message_id == message_id,
+        ).first()
+        if existing:
+            previously_processed += 1
+            if existing.application_id and existing.outcome:
+                linked = next(
+                    (app for app in applications if app.id == existing.application_id),
+                    None,
+                )
+                if linked and (only_app_id is None or linked.id == only_app_id):
+                    if _apply_outcome(linked, existing.outcome):
+                        updated += 1
             continue
 
         response = httpx.get(
@@ -518,9 +542,11 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
         outcome = classify_message(subject, f"{snippet} {body_text}")
         if not outcome:
             continue
+        classified_messages += 1
 
         app = match_application(applications, subject, sender, f"{snippet} {body_text[:2000]}")
-        if not app:
+        if not app or (only_app_id is not None and app.id != only_app_id):
+            unmatched_messages += 1
             continue
 
         received_at = None
@@ -564,6 +590,10 @@ def _sync_gmail_impl(db: Session, user_id: int, days: int = 45, max_results: int
         "scanned": scanned,
         "listed": len(message_ids),
         "targeted_listed": targeted_listed,
+        "classified": classified_messages,
+        "unmatched": unmatched_messages,
+        "already_processed": previously_processed,
+        "gmail_account": connection.google_email,
         "matched": matched,
         "updated": updated,
         "events": events_created,

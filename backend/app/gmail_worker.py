@@ -30,10 +30,10 @@ def sync_due_connections(now: datetime | None = None, interval_seconds: int = _D
                 continue
             try:
                 # First connection catches prior mail; routine sync focuses on
-                # recent mail and processes up to 300 message IDs (cached events
+                # recent mail and processes up to 100 message IDs (cached events
                 # are skipped).
                 days = 45 if connection.last_synced_at is None else 7
-                sync_gmail(db, connection.user_id, days=days, max_results=300)
+                sync_gmail(db, connection.user_id, days=days, max_results=100)
                 attempted += 1
             except Exception:
                 db.rollback()

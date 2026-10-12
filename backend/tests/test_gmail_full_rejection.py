@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db import Base
-from app.gmail_sync import _message_body_text, classify_message, sync_gmail
+from app.gmail_sync import _message_body_text, classify_message, sync_gmail, sync_application_gmail
 from app.models import Application, GmailConnection, GmailEvent
 
 
@@ -149,8 +149,62 @@ def test_company_targeted_search_finds_ommax_outside_general_mailbox_limit(monke
         result=sync_gmail(db,7,days=7,max_results=1)
         db.refresh(app)
         assert app.status=="Rejected"
-        assert result["listed"]==2
+        assert result["listed"]==1
         assert result["targeted_listed"]==1
         assert result["updated"]==1
         assert any('"Ommax"' in query for query in queries)
+    engine.dispose()
+
+
+
+def test_ommax_individual_sync_sets_rejected_and_reconciles_cached_event(monkeypatch):
+    engine=create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        app=Application(user_id=9,company="Ommax",
+            role="Intern AI & Data Engineering (m/f/d)",status="Applied",
+            applied_date=date(2026,10,9))
+        db.add(app)
+        db.add(GmailConnection(user_id=9,google_email="candidate@example.com",
+            access_token="token",refresh_token="refresh",
+            token_expires_at=datetime(2027,1,1)))
+        db.commit()
+        db.refresh(app)
+        class Resp:
+            status_code=200
+            def __init__(self,value):self.value=value
+            def raise_for_status(self):pass
+            def json(self):return self.value
+        queries=[]
+        def fake_get(url,headers,params,timeout):
+            if url.endswith("/messages"):
+                queries.append(params["q"])
+                assert '"Ommax"' in params["q"]
+                return Resp({"messages":[{"id":"message-ommax"}]})
+            assert url.endswith("/messages/message-ommax")
+            return Resp({
+                "snippet":"Thank you for your patience",
+                "internalDate":str(int(datetime(2026,10,12,17,0).timestamp()*1000)),
+                "payload":{"mimeType":"text/plain",
+                    "body":{"data":encoded(FULL_EMAIL)},
+                    "headers":[{"name":"Subject","value":SUBJECT},
+                               {"name":"From","value":"Sophie Steib <join@ommax.com>"}]}})
+        monkeypatch.setattr("app.gmail_sync.httpx.get",fake_get)
+        result=sync_application_gmail(db,9,app.id)
+        db.refresh(app)
+        assert app.status=="Rejected"
+        assert result["targeted_listed"]==1
+        assert result["gmail_account"]=="candidate@example.com"
+        assert result["updated"]==1
+        assert len(queries)==1
+        # Simulate an old status that was reset manually even though the
+        # matching Gmail event was already stored.
+        app.status="Applied"
+        db.commit()
+        replay=sync_application_gmail(db,9,app.id)
+        db.refresh(app)
+        assert app.status=="Rejected"
+        assert replay["already_processed"]==1
+        assert replay["updated"]==1
+        assert db.query(GmailEvent).count()==1
     engine.dispose()

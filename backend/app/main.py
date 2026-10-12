@@ -65,6 +65,7 @@ from .gmail_sync import (
     gmail_profile,
     serialize_event,
     sync_gmail,
+    sync_application_gmail,
 )
 from .models import (
     Application,
@@ -670,6 +671,39 @@ def gmail_sync_now(
     except httpx.HTTPError as exc:
         logger.exception("Gmail sync failed.")
         raise HTTPException(502, "Gmail could not be reached. Try reconnecting if this persists.") from exc
+
+
+@app.post("/api/applications/{application_id}/sync-gmail-status")
+def sync_application_status_now(
+    application_id: int,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    app_item = db.query(Application).filter(
+        Application.id == application_id,
+        Application.user_id == user.id,
+    ).first()
+    if app_item is None:
+        raise HTTPException(404, "Application not found.")
+    try:
+        result = sync_application_gmail(db, user.id, application_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        logger.exception("Application-specific Gmail check failed for user %s", user.id)
+        raise HTTPException(502, "Gmail check failed. Check Gmail connection and backend logs.") from exc
+    db.refresh(app_item)
+    return {
+        **result,
+        "application_id": app_item.id,
+        "company": app_item.company,
+        "status": app_item.status,
+        "message": (
+            "Rejection detected and application archived from the active list."
+            if app_item.status == "Rejected"
+            else "No confirmed rejection matched this application in the connected Gmail account."
+        ),
+    }
 
 
 @app.get("/api/gmail/events")
