@@ -51,6 +51,7 @@ from .intelligence import (
     rank_cv_skills,
 )
 from .match_layer import build_match_report
+from .gmail_worker import start_gmail_worker
 from .gmail_sync import (
     build_authorization_url,
     create_oauth_state,
@@ -445,7 +446,12 @@ async def lifespan(app: FastAPI):
                 logger.exception("Initial live-job sync failed; app will start with an empty market.")
     finally:
         db.close()
-    yield
+    gmail_stop, gmail_thread = start_gmail_worker()
+    try:
+        yield
+    finally:
+        gmail_stop.set()
+        gmail_thread.join(timeout=3)
 
 
 app = FastAPI(title="JobIntel AI API", version="0.7.1", lifespan=lifespan)
