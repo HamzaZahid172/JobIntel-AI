@@ -10,81 +10,125 @@ from docx.shared import Pt
 from .intelligence import profile_role_families, rank_cv_skills
 
 
-async def generate_cover_letter_text(cv_text: str, job, match: dict, user) -> tuple[str, str]:
-    matched = match.get("matched_skills") or []
-    missing = match.get("missing_skills") or []
-    top_cv = [row["skill"] for row in rank_cv_skills(cv_text, limit=8)]
-    mode = "template"
+def cover_letter_role_family(title: str) -> str:
+    value = title.lower()
+    if any(term in value for term in ("test", "qa ", "quality assurance", "sdet", "automation engineer")):
+        return "qa"
+    if any(term in value for term in ("data engineer", "etl", "analytics engineer", "data infrastructure")):
+        return "data"
+    if any(term in value for term in ("backend", "fullstack", "full stack", "python", "ai engineer", "ml engineer")):
+        return "backend"
+    return "general"
 
+
+def _cv_evidence(cv_text: str, skills: list[str], limit: int = 2) -> list[str]:
+    """Quote facts from the submitted CV; never manufacture a numeric achievement."""
+    sentences = re.split(r"(?<=[.!?])\s+|\n+", cv_text or "")
+    selected = []
+    for sentence in sentences:
+        sentence = re.sub(r"\s+", " ", sentence).strip(" •-*")
+        if not (35 <= len(sentence) <= 260):
+            continue
+        if "@" in sentence or "http" in sentence.lower():
+            continue
+        lower = sentence.lower()
+        if any(skill.lower() in lower for skill in skills) and any(
+            verb in lower for verb in (
+                "built", "developed", "automated", "implemented", "worked",
+                "managed", "created", "designed", "improved", "reduced",
+                "tested", "experience", "pipeline", "project"
+            )
+        ):
+            if sentence not in selected:
+                selected.append(sentence)
+        if len(selected) >= limit:
+            break
+    return selected
+
+
+def _verify_generated_letter(text: str, cv_text: str, job, user) -> bool:
+    """Minimum guardrail: role/company/name and every numeric claim must be grounded."""
+    if len(text.split()) < 140 or job.company.lower() not in text.lower() or (
+        job.title.lower() not in text.lower()
+    ) or user.display_name.lower() not in text.lower():
+        return False
+    factual_source = cv_text + " " + (job.description or "")
+    source_numbers = set(re.findall(r"\b\d{2,}\b", factual_source))
+    proposed_numbers = set(re.findall(r"\b\d{2,}\b", text))
+    return proposed_numbers <= source_numbers
+
+
+async def generate_cover_letter_text(cv_text: str, job, match: dict, user) -> tuple[str, str]:
+    matched = match.get("matched_required_skills") or match.get("matched_skills") or []
+    cv_skills = [row["skill"] for row in rank_cv_skills(cv_text, limit=12)]
+    verified = [skill for skill in matched if skill.lower() in cv_text.lower()]
+    family = cover_letter_role_family(job.title)
+    themes = {
+        "qa": "reliable test automation, regression coverage and practical quality engineering",
+        "data": "data acquisition, transformation, validation and maintainable data pipelines",
+        "backend": "maintainable backend services, API integration and reliable software delivery",
+        "general": "reliable engineering, collaborative delivery and solving practical technical problems",
+    }
+    evidence = _cv_evidence(cv_text, verified or cv_skills, limit=3)
     if os.getenv("USE_OLLAMA", "false").lower() == "true":
         try:
-            prompt = f"""Write a concise, professional English cover letter for the candidate below.
+            prompt = f"""Draft a professional, tailored cover letter in English, 180-280 words.
+Use ONLY evidence present in the CV below. No invented metrics, company history,
+commercial experience, credentials, language levels or work authorization.
+Personal projects must be called personal projects, never professional employment.
+Do not claim any missing skill. Mention exact job title, company and candidate name.
+Tone: precise, natural, experienced, no marketing clichés, no placeholders.
+Relevant requirement evidence: {', '.join(verified[:8])}
+Verbatim CV evidence: {evidence}
+Emphasis: {themes[family]}
 
-Rules:
-- 280 to 360 words.
-- Use only facts supported by the CV text.
-- Do not invent employers, achievements, certifications, languages, years, or tools.
-- Focus on the strongest overlap with the job.
-- Do not claim missing skills as existing skills.
-- Mention the exact company and role.
-- No placeholders.
-- End with a professional closing using the candidate's name.
-
-Candidate name: {user.display_name}
-Candidate email: {user.email}
-Role: {job.title}
-Company: {job.company}
-Location: {job.location}
-Matched skills: {", ".join(matched)}
-Missing skills: {", ".join(missing)}
-
+Candidate: {user.display_name}, {user.email}
+Target: {job.title} at {job.company}
 CV:
-{cv_text[:12000]}
-
+{cv_text[:11000]}
 Job description:
-{job.description[:12000]}
+{(job.description or '')[:9000]}
 """
-            async with httpx.AsyncClient(timeout=50) as client:
+            async with httpx.AsyncClient(timeout=65) as client:
                 response = await client.post(
                     f"{os.getenv('OLLAMA_URL', 'http://localhost:11434')}/api/generate",
-                    json={
-                        "model": os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
-                        "prompt": prompt,
-                        "stream": False,
-                        "options": {"temperature": 0.25},
-                    },
+                    json={"model": os.getenv("OLLAMA_MODEL", "llama3.2:3b"),
+                          "prompt": prompt, "stream": False,
+                          "options": {"temperature": 0.2}},
                 )
                 response.raise_for_status()
-                text = response.json().get("response", "").strip()
-                if len(text.split()) >= 120:
-                    return text, "ollama"
-        except Exception:
+                draft = response.json().get("response", "").strip()
+                if _verify_generated_letter(draft, cv_text, job, user):
+                    return draft, "ollama-reviewed"
+        except (httpx.HTTPError, ValueError, KeyError):
             pass
 
-    skill_phrase = ", ".join(matched[:6] or top_cv[:6])
-    role_families = ", ".join(x.replace("_", " ") for x in profile_role_families(cv_text)[:3])
-    opening = (
-        f"Dear Hiring Team at {job.company},\n\n"
-        f"I am writing to apply for the {job.title} position. "
-        f"My background aligns with several of the role's core technical requirements, particularly {skill_phrase}."
-    )
-    body = (
-        f"\n\nMy CV reflects hands-on experience across {role_families or 'software engineering and technical delivery'}. "
-        "I have worked on building, testing, integrating and improving software systems, with a focus on reliable implementation "
-        "and practical problem solving. The overlap between my experience and this role makes the opportunity especially relevant to me."
-    )
-    if matched:
-        body += (
-            "\n\nFor this position, the strongest match comes from "
-            + ", ".join(matched[:5])
-            + ". I would bring that existing experience to the role while continuing to deepen the areas that are specific to your environment."
+    # Deterministic evidence-only fallback when local AI is unavailable.
+    strengths = ", ".join(verified[:5] or cv_skills[:5])
+    evidence_text = ""
+    if evidence:
+        evidence_text = (
+            "\n\nOne directly relevant detail from my CV is: "
+            + " ".join(evidence[:2])
         )
-    closing = (
-        f"\n\nI would welcome the opportunity to discuss how my experience can contribute to {job.company}. "
-        "Thank you for considering my application.\n\nKind regards,\n"
-        f"{user.display_name}\n{user.email}"
+    text = (
+        f"Dear Hiring Team at {job.company},\n\n"
+        f"I would like to apply for the {job.title} position. "
+        f"The opportunity is relevant to my background in {themes[family]}. "
+        f"I am particularly interested in contributing to the responsibilities "
+        f"described for this role.\n\n"
+        f"My documented technical experience includes {strengths or 'software development and technical problem solving'}. "
+        "I aim to make engineering work dependable, understandable and useful "
+        "to the people who rely on it."
+        + evidence_text +
+        f"\n\nFor the {job.title} role, I would focus on the areas where my "
+        "existing experience aligns with your requirements, while being "
+        "transparent about technologies I would need to learn. "
+        f"I would welcome a conversation about how I could contribute to {job.company}.\n\n"
+        "Thank you for your time and consideration.\n\n"
+        f"Kind regards,\n{user.display_name}\n{user.email}"
     )
-    return opening + body + closing, mode
+    return text, "evidence-template"
 
 
 def build_cover_letter_docx(text: str, user, job) -> bytes:
