@@ -24,12 +24,18 @@ function fieldValue(info, profile) {
     .filter(Boolean).join(" ").toLowerCase().replace(/[_-]/g, " ");
   const exactName = String(info.name || info.id || "").trim().toLowerCase();
   const label = String(info.label || "").trim().replace(/[*:]+$/, "").trim().toLowerCase();
+  // Never infer answers to sensitive screening or employer declarations.
+  if (/(salary|compensation|pay range|visa|work authorization|sponsor|citizenship|citizen|eligib|relocat|notice period|start date|consent|privacy|gdpr|gender|race|ethnic|disability|veteran)/i.test(text)) return null;
   if (info.type === "hidden" || info.type === "password" ||
       info.type === "checkbox" || info.type === "radio" || info.type === "file" ||
-      info.tag === "select") return null;
+      (info.tag === "select" && !/(country|location|land|nation|stadt)/.test(text))) return null;
   if ((exactName === "name" || exactName === "fullname" || label === "name") &&
       info.tag !== "select" && info.type !== "file") {
     return {key:"fullName",value:String(profile.fullName || "").trim()};
+  }
+  if (/(your location|current location|present location|wohnort|current city)/.test(text) &&
+      !/(work location preference|preferred location)/.test(text)) {
+    return {key:"location",value:[profile.city,profile.country].filter(Boolean).join(", ")};
   }
   const tests = [
     [/(first\s*name|given\s*name|vorname|fname)/, "firstName"],

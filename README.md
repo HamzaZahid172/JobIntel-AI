@@ -366,3 +366,10 @@ application.
   for finding contacts.
 
 See docs/FOLLOWUP_CONTACTS.md for testing and limitations.
+
+
+## P0 application workspace v2
+
+JobIntel now includes an encrypted local document vault, a user-verified candidate profile, role-aware CV selection, evidence-grounded job-specific cover letters with editable DOCX attachment, and safer Playwright form filling with upload checks. You still approve each final employer submission. Open **Settings** to upload original CV and experience PDFs once; legacy extracted CV text cannot reproduce the original PDF.
+
+See [P0 setup and backup guidance](docs/P0_APPLICATION_WORKSPACE_V2.md). **Back up PostgreSQL and the `documents_data` vault volume together**, including the encryption key, before upgrades.

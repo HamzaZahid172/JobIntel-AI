@@ -156,3 +156,11 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .gmailEvidenceMeta{margin:12px 0;padding:14px 16px;border:1px solid #d9e5f1;
   background:#f5f9fd;border-radius:9px;line-height:1.8;overflow-wrap:anywhere}
 .gmailEvidenceMeta b{color:#173f64}
+
+.p0VaultRow{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0;padding:10px 12px;background:#f5f8fb;border-radius:8px}
+.p0VaultRow small{flex:1;min-width:150px}
+.p0VaultInfo{font-size:12px;margin:7px 0;color:#506379}
+.p0ProfileGrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}
+.p0ProfileGrid label{display:flex;flex-direction:column;gap:4px}
+.p0LetterPreview{width:100%;min-height:130px;resize:vertical}
+.p0DraftSection{padding:12px;margin:12px 0;border:1px solid #dbe3ee;border-radius:10px}

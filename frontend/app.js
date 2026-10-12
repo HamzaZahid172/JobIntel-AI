@@ -641,6 +641,9 @@ async function renderJobMarket(includeAll){
 const ASSIST_BASE='http://127.0.0.1:3401';
 let activeAssistJob=null;
 let lastAssistStatus=null;
+let activeAssistVaultDocs={};
+let activeAssistDraftReady=false;
+
 
 async function assistRequest(path,body){
   const config={method:body===undefined?'GET':'POST',headers:{"X-JobIntel-Assistant":"1"}};
@@ -701,6 +704,62 @@ function assistReview(status){
     }catch(err){assistMessage(err.message);open.disabled=false;}
   };
 }
+async function primeAssistedApplication(job){
+  const form=document.querySelector('#assistStartForm');
+  const start=form.querySelector('button[type=submit]');
+  const documentInfo=document.querySelector('#assistDocInfo');
+  const draftBox=document.querySelector('#assistGeneratedLetter');
+  const useDraft=document.querySelector('#assistIncludeLetter');
+  start.disabled=true;
+  activeAssistVaultDocs={};
+  activeAssistDraftReady=false;
+  draftBox.value='';
+  useDraft.checked=false;
+  documentInfo.textContent='Loading verified candidate profile and saved documents…';
+  try{
+    const [profile,selection]=await Promise.all([
+      apiFetch('/api/candidate-profile'),
+      apiFetch('/api/documents/selected?job_id='+encodeURIComponent(job.id))
+    ]);
+    if(activeAssistJob!==job)return;
+    for(const key of ['firstName','lastName','email','phone','city','country','linkedin','github','portfolio']){
+      if(form.elements[key] && profile[key])form.elements[key].value=profile[key];
+    }
+    activeAssistVaultDocs=selection.documents||{};
+    const chosen=activeAssistVaultDocs.cv;
+    documentInfo.textContent=chosen?
+      'Saved CV: '+chosen.filename+' ('+selection.role_family+') ·'+
+      (activeAssistVaultDocs.experience?' experience letter available':' no experience letter saved'):
+      'No saved original CV file. Select a CV override below or upload it once in Settings → Private document vault.';
+    start.disabled=false;
+    // Draft generation can take longer with the local Ollama model; do not
+    // block browser interaction or upload the draft without user review.
+    try{
+      const cv_id=chosen&&chosen.cv_profile_id;
+      const result=await apiFetch('/api/jobs/'+job.id+'/prepare-application',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({minimum_match:0,...(cv_id?{cv_id}:{} )})
+      });
+      if(activeAssistJob!==job)return;
+      draftBox.value=result.cover_letter_text||'';
+      activeAssistDraftReady=Boolean(draftBox.value.trim());
+      useDraft.checked=activeAssistDraftReady;
+      assistMessage(activeAssistDraftReady?
+        'Candidate documents loaded and tailored cover letter prepared. Review or edit the letter before attaching.':
+        'Candidate documents loaded. Write or upload a cover letter if requested.');
+    }catch(err){
+      if(activeAssistJob===job)assistMessage(
+        'Saved profile ready. Letter generation unavailable: '+err.message+
+        '. You can continue and upload a letter manually.');
+    }
+  }catch(err){
+    if(activeAssistJob===job){
+      documentInfo.textContent='Vault/profile unavailable: '+err.message+'; select the CV file manually.';
+      start.disabled=false;
+    }
+  }
+}
+
 function openAssistModal(job){
   if(!job.url){alert('This opportunity has no application link.');return;}
   activeAssistJob=job;lastAssistStatus=null;
@@ -715,7 +774,8 @@ function openAssistModal(job){
   form.elements.email.value=currentUser.email||'';
   form.elements.country.value='Germany';
   document.querySelector('#assistJobTitle').textContent=job.title+' · '+job.company;
-  assistMessage('Choose your documents and start the local Chromium assistant. Review each step.');
+  assistMessage('Loading saved CV, verified profile and tailored cover letter…');
+  primeAssistedApplication(job);
 }
 function bindAssistedApply(){
   document.querySelector('#assistCloseModal').onclick=function(){
@@ -737,7 +797,22 @@ function bindAssistedApply(){
         const file=fd.get(kind);
         if(file&&file.size)documents[kind]=await assistDocument(file);
       }
-      if(!documents.cv)throw new Error('Select a CV document first.');
+      // User-selected override always takes precedence over a saved document.
+      for(const kind of ['cv','experience','cover']){
+        const saved=activeAssistVaultDocs[kind];
+        if(!documents[kind]&&saved&&!(kind==='cover'&&
+             document.querySelector('#assistIncludeLetter').checked&&activeAssistDraftReady)){
+          documents[kind]=await apiFetch('/api/documents/'+saved.id+'/content');
+        }
+      }
+      const draftText=document.querySelector('#assistGeneratedLetter').value.trim();
+      if(!documents.cover&&draftText&&document.querySelector('#assistIncludeLetter').checked){
+        documents.cover=await apiFetch('/api/jobs/'+activeAssistJob.id+'/cover-letter-render',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({text:draftText})
+        });
+      }
+      if(!documents.cv)throw new Error('No original CV file is available. Upload it once in Settings → Private document vault, or select a CV override here.');
       const status=await assistRequest('/start',{url:activeAssistJob.url,profile,documents});
       form.classList.add('hidden');
       document.querySelector('#assistWorkspace').classList.remove('hidden');
@@ -1315,6 +1390,8 @@ async function renderAnalyticsPage(){
 }
 
 async function renderSettingsPage(){
+  const verifiedProfile=await apiFetch('/api/candidate-profile');
+  const vaultDocuments=await apiFetch('/api/documents');
   const sources=await apiFetch('/api/sources');
   const status=await apiFetch('/api/assistant/status');
   const targets=await apiFetch('/api/collector-targets');
@@ -1322,6 +1399,29 @@ async function renderSettingsPage(){
 
   document.querySelector('#pageContent').innerHTML=
     '<div class="detailGrid">' +
+      '<div class="card detailPage">' +
+        '<h2>Saved application profile</h2>' +
+        '<p>Confirm these details once. JobIntel fills known fields automatically and asks for missing or sensitive answers.</p>' +
+        '<form id="candidateProfileForm"><div class="p0ProfileGrid">' +
+        ['firstName','lastName','phone','city','country','linkedin','github','portfolio','education','employment','languages'].map(function(key){
+          const human=key.replace(/([A-Z])/g,' $1').replace(/^./,m=>m.toUpperCase());
+          return '<label>'+esc(human)+'<input name="'+key+'" value="'+esc(verifiedProfile[key]||'')+'" placeholder="'+(key==='country'?'Germany':'')+'"></label>';
+        }).join('')+'</div>' +
+        '<p class="p0VaultInfo">Email: '+esc(verifiedProfile.email)+' (verified account)</p>' +
+        '<button class="primary" type="submit">Save verified application profile</button></form></div>' +
+      '<div class="card detailPage">' +
+        '<h2>Private document vault</h2>' +
+        '<p>Upload each CV version and supporting letter once. Files are encrypted and stored in a persistent local Docker volume.</p>' +
+        '<form id="candidateVaultUpload"><label>Document type<select name="kind"><option value="cv">CV / Resume</option><option value="experience">Experience letter</option><option value="cover">Reusable cover letter</option></select></label>' +
+        '<label>CV role family<select name="role_family"><option value="general">General</option><option value="qa">QA Automation</option><option value="data">Data Engineering</option><option value="backend">Backend / AI</option></select></label>' +
+        '<label>Original document<input name="document" type="file" accept=".pdf,.doc,.docx,.txt" required></label>' +
+        '<button class="primary" type="submit">Save document</button></form>' +
+        (vaultDocuments.length?vaultDocuments.map(function(doc){
+          return '<div class="p0VaultRow"><b>'+esc(doc.filename)+'</b><small>'+esc(doc.kind)+' · '+esc(doc.role_family)+
+            ' · '+(doc.size_bytes/1024).toFixed(0)+' KB</small>' +
+            (doc.default_document?'<span class="pill good">Default</span>':'<button type="button" class="secondary candidateVaultDefault" data-id="'+doc.id+'">Set default</button>')+'</div>';
+        }).join(''):'<p>No original files saved yet. Upload a CV once to enable automatic document attachment.</p>') +
+      '</div>' +
       '<form id="profileForm" class="card detailPage">' +
         '<h2>Profile</h2>' +
         '<label>Name<input name="display_name" value="'+esc(currentUser.display_name)+'"></label>' +
@@ -1371,6 +1471,49 @@ async function renderSettingsPage(){
         '<pre class="codeSample">{ "jobs": [{ "source": "External Collector", "title": "...", "company": "...", "location": "Germany", "url": "...", "description": "...", "remote": false }] }</pre>' +
       '</div>' +
     '</div>';
+
+  document.querySelector('#candidateProfileForm').onsubmit=async function(e){
+    e.preventDefault();
+    const button=e.target.querySelector('button[type=submit]');
+    button.disabled=true;
+    try{
+      const values=Object.fromEntries(new FormData(e.target).entries());
+      await apiFetch('/api/candidate-profile',{method:'PATCH',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(values)});
+      alert('Verified application profile saved. These details can be reused by Assisted Apply.');
+      await renderSettingsPage();
+    }catch(err){alert('Candidate profile could not be saved: '+err.message);}
+    finally{button.disabled=false;}
+  };
+  document.querySelector('#candidateVaultUpload').onsubmit=async function(e){
+    e.preventDefault();
+    const button=e.target.querySelector('button[type=submit]');
+    button.disabled=true;
+    try{
+      const form=new FormData(e.target);
+      const kind=form.get('kind');
+      const role=form.get('role_family');
+      const file=form.get('document');
+      if(!file||!file.size)throw new Error('Select your original PDF/DOCX file.');
+      const payload=new FormData();
+      payload.append('file',file);
+      const path=kind==='cv'?'/api/cv/upload?role_family='+encodeURIComponent(role):
+        '/api/documents?kind='+encodeURIComponent(kind)+'&role_family=general';
+      await apiFetch(path,{method:'POST',body:payload});
+      await renderSettingsPage();
+    }catch(err){alert('Document could not be saved: '+err.message);}
+    finally{button.disabled=false;}
+  };
+  document.querySelectorAll('.candidateVaultDefault').forEach(function(button){
+    button.onclick=async function(){
+      button.disabled=true;
+      try{
+        await apiFetch('/api/documents/'+button.dataset.id+'/default',{method:'POST'});
+        await renderSettingsPage();
+      }catch(err){alert('Could not select default document: '+err.message);}
+      finally{button.disabled=false;}
+    };
+  });
 
   document.querySelector('#profileForm').onsubmit=async function(e){
     e.preventDefault();
