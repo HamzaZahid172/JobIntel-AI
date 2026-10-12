@@ -641,6 +641,9 @@ async function renderJobMarket(includeAll){
 const ASSIST_BASE='http://127.0.0.1:3401';
 let activeAssistJob=null;
 let lastAssistStatus=null;
+let activeAssistVaultDocs={};
+let activeAssistDraftReady=false;
+
 
 async function assistRequest(path,body){
   const config={method:body===undefined?'GET':'POST',headers:{"X-JobIntel-Assistant":"1"}};
@@ -701,6 +704,62 @@ function assistReview(status){
     }catch(err){assistMessage(err.message);open.disabled=false;}
   };
 }
+async function primeAssistedApplication(job){
+  const form=document.querySelector('#assistStartForm');
+  const start=form.querySelector('button[type=submit]');
+  const documentInfo=document.querySelector('#assistDocInfo');
+  const draftBox=document.querySelector('#assistGeneratedLetter');
+  const useDraft=document.querySelector('#assistIncludeLetter');
+  start.disabled=true;
+  activeAssistVaultDocs={};
+  activeAssistDraftReady=false;
+  draftBox.value='';
+  useDraft.checked=false;
+  documentInfo.textContent='Loading verified candidate profile and saved documents…';
+  try{
+    const [profile,selection]=await Promise.all([
+      apiFetch('/api/candidate-profile'),
+      apiFetch('/api/documents/selected?job_id='+encodeURIComponent(job.id))
+    ]);
+    if(activeAssistJob!==job)return;
+    for(const key of ['firstName','lastName','email','phone','city','country','linkedin','github','portfolio']){
+      if(form.elements[key] && profile[key])form.elements[key].value=profile[key];
+    }
+    activeAssistVaultDocs=selection.documents||{};
+    const chosen=activeAssistVaultDocs.cv;
+    documentInfo.textContent=chosen?
+      'Saved CV: '+chosen.filename+' ('+selection.role_family+') ·'+
+      (activeAssistVaultDocs.experience?' experience letter available':' no experience letter saved'):
+      'No saved original CV file. Select a CV override below or upload it once in Settings → Private document vault.';
+    start.disabled=false;
+    // Draft generation can take longer with the local Ollama model; do not
+    // block browser interaction or upload the draft without user review.
+    try{
+      const cv_id=chosen&&chosen.cv_profile_id;
+      const result=await apiFetch('/api/jobs/'+job.id+'/prepare-application',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({minimum_match:0,...(cv_id?{cv_id}:{} )})
+      });
+      if(activeAssistJob!==job)return;
+      draftBox.value=result.cover_letter_text||'';
+      activeAssistDraftReady=Boolean(draftBox.value.trim());
+      useDraft.checked=activeAssistDraftReady;
+      assistMessage(activeAssistDraftReady?
+        'Candidate documents loaded and tailored cover letter prepared. Review or edit the letter before attaching.':
+        'Candidate documents loaded. Write or upload a cover letter if requested.');
+    }catch(err){
+      if(activeAssistJob===job)assistMessage(
+        'Saved profile ready. Letter generation unavailable: '+err.message+
+        '. You can continue and upload a letter manually.');
+    }
+  }catch(err){
+    if(activeAssistJob===job){
+      documentInfo.textContent='Vault/profile unavailable: '+err.message+'; select the CV file manually.';
+      start.disabled=false;
+    }
+  }
+}
+
 function openAssistModal(job){
   if(!job.url){alert('This opportunity has no application link.');return;}
   activeAssistJob=job;lastAssistStatus=null;
@@ -715,7 +774,8 @@ function openAssistModal(job){
   form.elements.email.value=currentUser.email||'';
   form.elements.country.value='Germany';
   document.querySelector('#assistJobTitle').textContent=job.title+' · '+job.company;
-  assistMessage('Choose your documents and start the local Chromium assistant. Review each step.');
+  assistMessage('Loading saved CV, verified profile and tailored cover letter…');
+  primeAssistedApplication(job);
 }
 function bindAssistedApply(){
   document.querySelector('#assistCloseModal').onclick=function(){
@@ -737,7 +797,22 @@ function bindAssistedApply(){
         const file=fd.get(kind);
         if(file&&file.size)documents[kind]=await assistDocument(file);
       }
-      if(!documents.cv)throw new Error('Select a CV document first.');
+      // User-selected override always takes precedence over a saved document.
+      for(const kind of ['cv','experience','cover']){
+        const saved=activeAssistVaultDocs[kind];
+        if(!documents[kind]&&saved&&!(kind==='cover'&&
+             document.querySelector('#assistIncludeLetter').checked&&activeAssistDraftReady)){
+          documents[kind]=await apiFetch('/api/documents/'+saved.id+'/content');
+        }
+      }
+      const draftText=document.querySelector('#assistGeneratedLetter').value.trim();
+      if(!documents.cover&&draftText&&document.querySelector('#assistIncludeLetter').checked){
+        documents.cover=await apiFetch('/api/jobs/'+activeAssistJob.id+'/cover-letter-render',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({text:draftText})
+        });
+      }
+      if(!documents.cv)throw new Error('No original CV file is available. Upload it once in Settings → Private document vault, or select a CV override here.');
       const status=await assistRequest('/start',{url:activeAssistJob.url,profile,documents});
       form.classList.add('hidden');
       document.querySelector('#assistWorkspace').classList.remove('hidden');
