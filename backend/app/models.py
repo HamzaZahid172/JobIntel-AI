@@ -158,3 +158,27 @@ class GmailEvent(Base):
     snippet: Mapped[str] = mapped_column(Text, default="")
     received_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class CandidateDocument(Base):
+    """Original attachment metadata. Ciphertext is outside the Git repository."""
+    __tablename__ = "candidate_documents"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True)
+    kind: Mapped[str] = mapped_column(String(25))
+    role_family: Mapped[str] = mapped_column(String(25), default="general")
+    filename: Mapped[str] = mapped_column(String(255))
+    mime_type: Mapped[str] = mapped_column(String(120))
+    storage_key: Mapped[str] = mapped_column(String(64), unique=True)
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    default_document: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class CandidateProfile(Base):
+    """Only user-approved details are sent to the browser assistant."""
+    __tablename__ = "candidate_profiles"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    profile_json: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
