@@ -98,3 +98,28 @@ and `fix/*` branches after every `main` push. It deletes a branch only if
 its exact head commit is the head of a merged pull request against `develop`
 or `main`, after verifying the branch has not moved. `main`, `develop`,
 protected branches and unmerged changes remain untouched.
+
+## Automatic My Applications Gmail checks — no manual button
+
+When **My Applications** is opened or the browser page is refreshed, JobIntel
+renders saved applications immediately and asynchronously starts a **company-targeted
+Gmail check**. It fetches recent messages for tracked active employers (including
+Trash) without scanning a full general inbox, classifies real employer replies,
+updates confirmed outcomes and redraws the list. Rejected roles move out of the
+default active list automatically and stay in **Show rejected** for history.
+A subtle status line shows whether the background check completed or could
+not access Gmail. To avoid repeated requests on rapid navigation, same-tab
+checks are debounced for 45 seconds. Reloading the browser starts a new check.
+The existing server-side Gmail worker also polls periodically even when the
+page is closed.
+
+There is **no Check Gmail Status or Sync Gmail button** in My Applications.
+The **Rejected** status is itself clickable when Show rejected is enabled.
+It opens a rejection review with the actual employer reason where stated,
+supporting email evidence, and practical non-speculative next steps. No email
+or tracked application is deleted.
+
+Gmail OAuth must be connected to the same account receiving the employer
+response. Automatic checks are best-effort, not instantaneous Gmail push.
+If the status indicator reports an error, open Settings → Gmail and inspect
+the backend Docker logs; CI cannot connect to your personal live Gmail.

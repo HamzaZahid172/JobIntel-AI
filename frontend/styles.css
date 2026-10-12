@@ -144,3 +144,11 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .rejectionReviewCaution{padding:10px 12px;background:#f4f7fa;color:#4a586a;border-radius:8px}
 .rejectionReviewPanel ul{padding-left:22px}
 .reviewRejection{font-size:11px;margin:5px 0 0 0;display:inline-block}
+
+/* Gmail outcomes: no manual check button needed; make rejection status actionable. */
+#gmailAutoRefreshStatus{display:block;margin-top:5px;color:#506579;font-size:11px}
+.gmailRejectedStatus{display:inline-flex;align-items:center;gap:4px;cursor:pointer;
+  border:1px solid #f1c0b8;border-radius:8px;padding:7px 10px;
+  background:#fff0ee;color:#a12322;font:inherit;font-size:12px;font-weight:700}
+.gmailRejectedStatus:hover,.gmailRejectedStatus:focus-visible{
+  background:#ffe0db;outline:2px solid #d9776b;outline-offset:2px}
