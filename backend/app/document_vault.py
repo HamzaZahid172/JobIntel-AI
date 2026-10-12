@@ -65,7 +65,7 @@ def _validate(filename: str, raw: bytes) -> tuple[str, str]:
 
 def store_document(db: Session, user_id: int, filename: str, raw: bytes,
                    kind: str = "cv", role_family: str = "general",
-                   make_default: bool = True) -> CandidateDocument:
+                   make_default: bool = True, cv_profile_id: int | None = None) -> CandidateDocument:
     if kind not in KINDS or role_family not in ROLES:
         raise HTTPException(400, "Unsupported document kind or CV role family.")
     filename, mime = _validate(filename, raw)
@@ -75,6 +75,8 @@ def store_document(db: Session, user_id: int, filename: str, raw: bytes,
         CandidateDocument.kind == kind, CandidateDocument.role_family == role_family
     ).first()
     if found:
+        if cv_profile_id is not None:
+            found.cv_profile_id = cv_profile_id
         if make_default:
             for other in db.query(CandidateDocument).filter(
                     CandidateDocument.user_id == user_id, CandidateDocument.kind == kind,
@@ -94,6 +96,7 @@ def store_document(db: Session, user_id: int, filename: str, raw: bytes,
             CandidateDocument.role_family == role_family,
         ).update({"default_document": False})
     row = CandidateDocument(
+        cv_profile_id=cv_profile_id,
         user_id=user_id, kind=kind, role_family=role_family, filename=filename,
         mime_type=mime, storage_key=token, sha256=sha,
         size_bytes=len(raw), default_document=make_default)
@@ -124,6 +127,7 @@ def public_document(row: CandidateDocument) -> dict:
         "id": row.id, "kind": row.kind, "role_family": row.role_family,
         "filename": row.filename, "mime_type": row.mime_type,
         "size_bytes": row.size_bytes, "default_document": row.default_document,
+        "cv_profile_id": row.cv_profile_id,
         "created_at": row.created_at.isoformat(),
     }
 
