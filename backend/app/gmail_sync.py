@@ -579,7 +579,8 @@ def _sync_gmail_impl(
                 response = httpx.get(
                     f"{GMAIL_API}/users/me/messages/{message_id}",
                     headers=headers,
-                    params={"format": "full"},
+                    params=[("format", "full"), ("metadataHeaders", "Subject"),
+                            ("metadataHeaders", "From"), ("metadataHeaders", "Date")],
                     timeout=20,
                 )
                 response.raise_for_status()
