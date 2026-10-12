@@ -1,6 +1,8 @@
 import re
 from dataclasses import dataclass
 
+from .eligibility import assess_eligibility
+
 from .intelligence import (
     classify_job_role,
     extract_skills,
@@ -178,6 +180,7 @@ def build_match_report(
     remote: bool = False,
 ) -> dict:
     requirements = extract_job_requirements(title, description, location, remote)
+    eligibility = assess_eligibility(cv_text,title,description,location)
 
     cv_skills = set(extract_skills(cv_text))
     required = set(requirements["required_skills"])
@@ -261,6 +264,7 @@ def build_match_report(
             "A required non-English language level is higher than the level evidenced in the uploaded CV."
         )
 
+    hard_blockers.extend(eligibility['hard_blockers'])
     if hard_blockers:
         overall = min(overall, 59)
 
@@ -277,6 +281,7 @@ def build_match_report(
 
     return {
         "overall_score": max(0, min(100, overall)),
+        "eligibility": eligibility,
         "readiness": readiness,
         "eligible_for_preparation": overall >= 70 and not hard_blockers,
         "score_breakdown": {
