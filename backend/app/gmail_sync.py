@@ -199,6 +199,7 @@ def classify_message(subject: str, snippet: str) -> str | None:
         "regret to inform", "not moving forward", "not proceed with your",
         "other candidates", "other applicants", "application was unsuccessful",
         "will not be moving", "we have decided not to",
+        "won't be moving forward", "will not be moving forward",
         "not selected", "unable to offer you", "won't be proceeding",
         "will not proceed", "nicht berücksichtigen", "leider absagen",
         "leider nicht", "absage ihrer bewerbung", "bewerbung leider",
