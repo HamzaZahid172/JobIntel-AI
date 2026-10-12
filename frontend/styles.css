@@ -136,3 +136,11 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 
 .gmailRejectionNotice{margin:12px 0;padding:15px 18px;border-left:4px solid #d97706;background:#fffaf0;line-height:1.5}
 .gmailRejectionNotice p{margin:4px 0 0;font-size:13px;color:#65523d}
+
+.rejectionReviewPanel{margin:16px 0;padding:20px;border:1px solid #d8e3ed;line-height:1.65}
+.rejectionReviewHead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px}
+.rejectionReviewHead h3{margin:0}
+.rejectionReviewPanel blockquote{margin:12px 0;padding:12px 15px;border-left:3px solid #c67a23;background:#fff9f0;white-space:normal}
+.rejectionReviewCaution{padding:10px 12px;background:#f4f7fa;color:#4a586a;border-radius:8px}
+.rejectionReviewPanel ul{padding-left:22px}
+.reviewRejection{font-size:11px;margin:5px 0 0 0;display:inline-block}
