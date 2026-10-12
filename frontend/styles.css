@@ -164,3 +164,29 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .p0ProfileGrid label{display:flex;flex-direction:column;gap:4px}
 .p0LetterPreview{width:100%;min-height:130px;resize:vertical}
 .p0DraftSection{padding:12px;margin:12px 0;border:1px solid #dbe3ee;border-radius:10px}
+
+/* Dashboard/account polish — no promotional sidebar cards. */
+.profileAccountButton{appearance:none;text-align:left;width:calc(100% - 28px);background:#fff;border:1px solid #e2eaf5;cursor:pointer;padding-right:25px}
+.profileAccountButton:hover,.profileAccountButton:focus-visible{border-color:#9ac5ed;background:#f4f9fe}
+.accountChevron{position:absolute;right:10px;top:14px;font-size:16px;color:#70819a}
+.accountAnchor{position:relative;flex-shrink:0}
+.accountMenu{position:absolute;right:0;top:calc(100% + 11px);z-index:40;width:248px;background:#fff;border:1px solid #d8e5f2;border-radius:14px;padding:8px;box-shadow:0 16px 35px rgba(14,37,76,.18)}
+.accountMenu.hidden{display:none}
+.accountMenuIdentity{display:grid;gap:3px;padding:12px 10px;border-bottom:1px solid #edf2fa;margin-bottom:5px;overflow-wrap:anywhere}
+.accountMenuIdentity b{font-size:13px}
+.accountMenuIdentity small{font-size:11px;color:#60728c}
+.accountMenu button{display:block;width:100%;border:0;background:transparent;color:#243a58;padding:11px 12px;text-align:left;border-radius:9px;cursor:pointer;font-weight:650}
+.accountMenu button:hover,.accountMenu button:focus-visible{background:#eff6fe;outline:2px solid #add4fb}
+#accountLogout{color:#ae2f3a}
+.avatarBtn{cursor:pointer;border:0}
+.avatarBtn:focus-visible{outline:3px solid #80bcf6;outline-offset:3px}
+.dashboardRefreshStatus{font-size:12px;color:#657a95;margin:0 0 12px 1px;min-height:17px}
+.metrics{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
+.dashboardMetricBad{background:#fff8f7;border-color:#f6d8d5}
+.dashboardMetricBad .metricIcon{background:#ffebe8;color:#b82c36}
+.dashboardMetricBad b{color:#a92c35}
+#refreshDashboard{white-space:nowrap}
+@media(max-width:850px){.headerActions{flex-wrap:wrap}.accountMenu{max-width:min(270px,85vw)}}
+
+/* Keep a readable single-column summary on narrow screens. */
+@media(max-width:760px){.metrics{grid-template-columns:1fr}.headerActions{gap:6px}#refreshDashboard{font-size:12px}}
