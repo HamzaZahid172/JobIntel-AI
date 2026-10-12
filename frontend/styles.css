@@ -208,3 +208,11 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .googleSignInButton span{font-size:18px;color:#386ecf;font-weight:800}
 .authProviderNote{display:block;text-align:center;font-size:11px;color:#6b7d94;margin:10px 0}
 .googleSignInSettings small{display:block;margin-top:9px;color:#667b96}
+
+.googleSignInDivider{color:#62768d;text-align:center;margin:10px 0;position:relative}
+.googleSignInButton{display:flex;width:100%;align-items:center;justify-content:center;gap:10px;background:#fff;border:1px solid #bdcad9;color:#264461;font-size:14px;font-weight:650;border-radius:10px;padding:12px;cursor:pointer}
+.googleSignInButton:hover{background:#f3f8ff;border-color:#729ed5}
+.googleSignInButton:focus-visible{outline:3px solid #84bdf1;outline-offset:2px}
+.googleSignInButton span{font-size:18px;color:#386ecf;font-weight:800}
+.authProviderNote{display:block;text-align:center;font-size:11px;color:#6b7d94;margin:10px 0}
+.googleSignInSettings small{display:block;margin-top:9px;color:#667b96}
