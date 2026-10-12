@@ -11,9 +11,9 @@ test("Google login is separate from password and existing Gmail scopes",()=>{
   assert.match(html,/id="googleSignIn"/);
   assert.match(html,/id="loginForm"/);
   assert.match(html,/id="registerForm"/);
-  assert.match(js,/\/'api\/auth\/google\/start'/);
-  assert.match(js,/\/'api\/auth\/google\/link'/);
-  assert.match(js,/\/'api\/auth\/google\/exchange'/);
+  assert.ok(js.includes('/api/auth/google/start'));
+  assert.ok(js.includes('/api/auth/google/link'));
+  assert.ok(js.includes('/api/auth/google/exchange'));
   assert.match(js,/\/api\/auth\/google\/status/);
 });
 
