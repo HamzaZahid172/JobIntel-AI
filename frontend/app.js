@@ -586,7 +586,7 @@ function jobCard(job, compact){
   return '<article class="marketJob card">' +
     '<div class="marketJobTop"><div><span class="sourceTag">' + esc(job.source) + '</span>' +
     '<h3>' + esc(job.title) + '</h3><p>' + esc(job.company) + ' · ' + esc(job.location) + '</p></div>' +
-    '<div class="scoreBadge">' + score + '<small>match</small></div></div>' +
+    '<div class="scoreBadge">' + score + '<small>CV overlap</small></div></div>' +
     '<div class="tagRow">' + skills.map(function(s){return '<span class="tag">' + esc(s) + '</span>';}).join('') + '</div>' +
     (job.opportunity ? '<p class="opportunityLine"><b>Opportunity '+Math.round(job.opportunity.score)+'/100</b> · '+esc(job.opportunity.decision)+' · '+esc(job.opportunity.track)+(job.opportunity.age_days!=null?' · '+job.opportunity.age_days+'d old':'')+'</p>' : '') +
     (job.opportunity&&job.opportunity.eligibility?'<p class="eligibilityLine"><b>Eligibility:</b> '+esc(job.opportunity.eligibility.status)+' · '+esc(job.opportunity.eligibility.seniority)+' · '+esc(job.opportunity.eligibility.employment_type)+'</p>'+((job.opportunity.eligibility.needs_confirmation||[]).length?'<p class="muted">Verify: '+job.opportunity.eligibility.needs_confirmation.map(esc).join('; ')+'</p>':''):'') +
@@ -597,6 +597,7 @@ function jobCard(job, compact){
       (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
       '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
       '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
+      '<button class="secondary applicationQualityBtn" data-job-id="' + job.id + '">Pre-Apply Check</button>' +
       '<button class="primary guidedApplyBtn" data-job-id="' + job.id + '">Assisted Apply</button>' +
       '<button class="secondary atsReviewBtn" data-job-id="' + job.id + '">ATS Review</button>' +
       '<button class="secondary startPracticeBtn" data-job-id="' + job.id + '">Interview Prep</button>' +
@@ -639,6 +640,9 @@ function bindTrackButtons(){
 
   document.querySelectorAll('.atsReviewBtn').forEach(function(button){
     button.onclick=function(){showAtsReview(button.dataset.jobId);};
+  });
+  document.querySelectorAll('.applicationQualityBtn').forEach(function(button){
+    button.onclick=function(){showPreApplyCheck(button.dataset.jobId);};
   });
   document.querySelectorAll('.tailorCvBtn').forEach(function(button){
     button.onclick=function(){showTailorCv(button.dataset.jobId);};
@@ -1205,6 +1209,50 @@ async function renderActionCenter(){
   }
 }
 
+function chooseRoleCvOption(versions,jobId,select){
+  const job=jobMarketCache.find(row=>String(row.id)===String(jobId));
+  const family=job && job.recommended_cv_family || 'general';
+  const chosen=versions.find(row=>row.role_family===family) ||
+               versions.find(row=>row.role_family==='general') || versions[0];
+  if(chosen)select.value=String(chosen.id);
+}
+
+async function showPreApplyCheck(jobId){
+  const modal=document.querySelector('#tailorModal');
+  const versionSelect=document.querySelector('#tailorVersion');
+  const output=document.querySelector('#tailorDraft');
+  modal.classList.remove('hidden');
+  modal.querySelector('h3').textContent='Application Quality Review';
+  document.querySelector('#prepareWithSelectedCv').classList.add('hidden');
+  output.value='Checking CV evidence and job eligibility...';
+  try{
+    const versions=await apiFetch('/api/cv/versions');
+    if(!versions.length)throw new Error('Upload a CV to start this review.');
+    versionSelect.innerHTML=versions.map(v=>'<option value="'+v.id+'">'+esc(v.filename)+' ('+esc(humanRoleFamily(v.role_family))+')</option>').join('');
+    chooseRoleCvOption(versions,jobId,versionSelect);
+    // Server default respects the per-role default document, not just newest CV.
+    const first=await apiFetch('/api/jobs/'+jobId+'/application-quality');
+    if(versions.some(v=>v.id===first.cv_id))versionSelect.value=String(first.cv_id);
+    async function refresh(){
+      const data=await apiFetch('/api/jobs/'+jobId+'/application-quality?cv_id='+encodeURIComponent(versionSelect.value));
+      const q=data.review;
+      const labels={blocker:'STOP',review:'CHECK',info:'INFO'};
+      output.value='PRE-APPLICATION REVIEW: '+q.status+
+        '\nSelected CV: '+(q.cv_filename||'No CV')+' ('+humanRoleFamily(q.selected_cv_family)+')'+
+        '\nTarget CV track: '+humanRoleFamily(q.role_family)+
+        '\nTechnical keyword overlap: '+q.technical_match_percent+'%'+
+        '\n'+q.score_meaning+
+        '\nPosting age: '+(q.vacancy_age_days==null?'Unknown':q.vacancy_age_days+' days')+
+        '\n\nACTIONS BEFORE APPLYING:\n'+
+        (q.checks||[]).map(row=>'['+(labels[row.level]||'CHECK')+'] '+row.message).join('\n')+
+        '\n\nVerify the employer form, uploaded CV, screening responses and confirmation yourself.'+
+        '\nNo automated score guarantees ATS acceptance or an interview.';
+    }
+    versionSelect.onchange=refresh;
+    await refresh();
+  }catch(err){output.value='Application quality review unavailable: '+err.message;}
+}
+
 async function showAtsReview(jobId){
   const modal=document.querySelector('#tailorModal');
   const versionSelect=document.querySelector('#tailorVersion');
@@ -1217,6 +1265,7 @@ async function showAtsReview(jobId){
     const cvs=await apiFetch('/api/cv/versions');
     if(!cvs.length)throw new Error('Upload a CV first.');
     versionSelect.innerHTML=cvs.map(function(cv){return '<option value="'+cv.id+'">'+esc(cv.filename)+'</option>';}).join('');
+    chooseRoleCvOption(cvs,jobId,versionSelect);
     async function read(){
       const payload=await apiFetch('/api/jobs/'+jobId+'/ats-review?cv_id='+versionSelect.value);
       const a=payload.assessment;
@@ -1254,6 +1303,7 @@ async function showTailorCv(jobId){
     versionSelect.innerHTML=versions.map(function(v){
       return '<option value="'+v.id+'">'+esc(v.filename)+' · '+Math.round(v.ats_score)+' ATS readiness</option>';
     }).join('');
+    chooseRoleCvOption(versions,jobId,versionSelect);
     async function refresh(){
       const data=await apiFetch('/api/jobs/'+jobId+'/tailor-cv?cv_id='+versionSelect.value);
       const d=data.draft;
