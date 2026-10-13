@@ -170,8 +170,17 @@ def cv_tailoring_draft(cv_text: str, job, match: dict) -> dict:
     evidence = _cv_evidence(cv_text, matched)
     evidenced = [skill for skill in matched if re.search(r"(?<!\\w)" + re.escape(skill) + r"(?!\\w)", cv_text or "", re.I)]
     highlights = ", ".join(evidenced[:5])
+    role_title = (job.title or "").lower()
+    if re.search(r"\\b(?:qa|sdet|test automation|automation engineer|quality assurance)\\b", role_title):
+        role_focus = "QA automation"
+    elif re.search(r"\\b(?:data engineer|etl|data infrastructure|analytics engineer)\\b", role_title):
+        role_focus = "data engineering"
+    elif re.search(r"\\b(?:backend|python|software engineer|fastapi)\\b", role_title):
+        role_focus = "backend/software engineering"
+    else:
+        role_focus = "software engineering"
     summary = (
-        f"Software professional applying for the {job.title} role at {job.company}. "
+        f"Candidate for the {job.title} role at {job.company}, with documented {role_focus} skills where evidenced in the CV. "
         + (f"Relevant skills documented in the CV include {highlights}. " if highlights else "")
         + "Experienced in delivering software-related work, with detailed examples in the original CV."
     )
@@ -180,6 +189,7 @@ def cv_tailoring_draft(cv_text: str, job, match: dict) -> dict:
         "job_title": job.title,
         "company": job.company,
         "suggested_summary": summary,
+        "role_focus": role_focus,
         "cv_evidence": evidence,
         "matched_skills": evidenced,
         "missing_skills_do_not_claim": missing,
