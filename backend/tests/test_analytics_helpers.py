@@ -109,3 +109,12 @@ def test_pending_applications_separate_from_decided_outcomes():
     assert overall["decided_outcomes"] == 2
     assert overall["decided_interview_conversion_percent"] == 50.0
     assert overall["sample_warning"]
+
+
+def test_no_interview_diagnostic_does_not_invent_causes():
+    from app.conversion_analytics import application_analytics
+    entries=[SimpleNamespace(role="Backend Engineer",url="https://example.com/1",
+                             cv_version="v1",status="Rejected") for _ in range(10)]
+    result=application_analytics(entries)["overall"]
+    assert result["zero_interview_diagnostic"]
+    assert "no single cause" in result["diagnostic"]
