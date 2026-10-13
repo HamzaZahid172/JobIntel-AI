@@ -21,9 +21,7 @@ def ats_review(cv_text: str, match_report: dict) -> dict:
     )
     # Use matches reported by the existing structured match layer; preserve source truth.
     matched = set(x.lower() for x in match_report.get("matched_required_skills") or [])
-    confirmed = [skill for skill in required if skill.lower() in matched or
-                 re.search(r"(?<!\w)"+re.escape(skill)+r"(?!\w)", raw, re.I)]
-    missing = [skill for skill in required if skill not in confirmed]
+    confirmed = [skill for skill in required if\n                 re.search(r"(?<!\\w)"+re.escape(skill)+r"(?!\\w)", raw, re.I)]\n    missing = [skill for skill in required if skill not in confirmed]
     missing_evidence = [skill for skill in required if skill.lower() in matched and skill not in confirmed]
     sections = {
         "experience": bool(re.search(r"\b(experience|employment|work history|berufserfahrung)\b",raw,re.I)),
