@@ -102,3 +102,12 @@ def test_eligibility_is_visible_alongside_matching():
         "Python FastAPI. German C1 required.", "Berlin")
     assert result["eligibility"]["status"]=="Blocked"
     assert any("German" in item for item in result["hard_blockers"])
+
+def test_remote_eligibility_not_assumed():
+    from app.match_layer import _location_score
+    score, reason = _location_score("Remote", True)
+    assert score < 60
+    assert "unverified" in reason.lower()
+    assert _location_score("Remote, Germany", True)[0] == 100
+    assert _location_score("USA only", True)[0] < 30
+    assert _location_score("Remote - Europe", True)[0] < 100

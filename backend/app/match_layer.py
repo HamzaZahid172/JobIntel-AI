@@ -139,19 +139,22 @@ def _language_requirement_met(cv_text: str, language: str, required_level: str) 
 
 
 def _location_score(location: str, remote: bool) -> tuple[int, str]:
+    """Do not confuse generic remote work with Germany eligibility."""
     lower = (location or "").lower()
-    germany_terms = (
-        "germany", "deutschland", "berlin", "munich", "münchen", "hamburg",
-        "frankfurt", "stuttgart", "dresden", "leipzig", "düsseldorf",
-        "dusseldorf", "köln", "cologne", "hannover", "erfurt", "ilmenau",
-        "karlsruhe", "aachen", "jena", "nuremberg", "nürnberg",
-    )
-    eu_remote_terms = ("europe", "eu", "emea", "cet", "cest")
-    if any(term in lower for term in germany_terms):
+    germany_terms = ("germany", "deutschland", "berlin", "munich", "münchen",
+                     "hamburg", "frankfurt", "stuttgart", "dresden", "leipzig",
+                     "düsseldorf", "dusseldorf", "köln", "cologne", "hannover",
+                     "erfurt", "ilmenau", "karlsruhe", "aachen", "jena",
+                     "nuremberg", "nürnberg")
+    if re.search(r"\b(?:usa? only|united states only|uk only|united kingdom only|north america only)\b", lower):
+        return 15, "Location explicitly restricted outside target market"
+    if any(re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", lower) for term in germany_terms):
         return 100, "Germany location"
-    if remote and (not lower or "remote" in lower or any(term in lower for term in eu_remote_terms)):
-        return 95, "Remote / Europe-compatible"
-    return 55, "Location needs review"
+    if remote and re.search(r"\b(?:europe|european union|emea|worldwide|anywhere|global)\b", lower):
+        return 80, "Remote region may include Germany; confirm employer eligibility"
+    if remote:
+        return 45, "Remote location unspecified; Germany eligibility unverified"
+    return 40, "Location needs review"
 
 
 def extract_job_requirements(
