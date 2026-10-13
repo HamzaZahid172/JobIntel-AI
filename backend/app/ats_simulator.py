@@ -24,6 +24,7 @@ def ats_review(cv_text: str, match_report: dict) -> dict:
     confirmed = [skill for skill in required if skill.lower() in matched or
                  re.search(r"(?<!\w)"+re.escape(skill)+r"(?!\w)", raw, re.I)]
     missing = [skill for skill in required if skill not in confirmed]
+    missing_evidence = [skill for skill in required if skill.lower() in matched and skill not in confirmed]
     sections = {
         "experience": bool(re.search(r"\b(experience|employment|work history|berufserfahrung)\b",raw,re.I)),
         "education": bool(re.search(r"\b(education|university|degree|ausbildung|studium)\b",raw,re.I)),
@@ -39,6 +40,8 @@ def ats_review(cv_text: str, match_report: dict) -> dict:
     for field in ("experience","education","skills"):
         if not sections[field]:
             notes.append("Check that the "+field+" section is clearly labelled and readable.")
+    if missing_evidence:
+        notes.append("Some previously matched skills are not visible in the raw CV text; verify parsing and evidence.")
     if missing:
         notes.append("Do not invent missing skills. Provide evidence only for skills you actually have.")
     if blockers:
@@ -50,6 +53,7 @@ def ats_review(cv_text: str, match_report: dict) -> dict:
         "required_skill_coverage": coverage,
         "required_skills_found": confirmed,
         "required_skills_missing": missing,
+        "previously_matched_without_cv_evidence": missing_evidence,
         "preferred_skills": preferred,
         "hard_blockers": blockers,
         "job_match_score": match_report.get("overall_score"),
