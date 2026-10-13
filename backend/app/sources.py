@@ -24,7 +24,7 @@ GERMAN_LOCATIONS = (
     "köln", "stuttgart", "dresden", "leipzig", "düsseldorf", "dusseldorf", "bonn",
     "nuremberg", "nürnberg", "hannover", "hanover", "bremen", "erfurt", "ilmenau",
     "karlsruhe", "darmstadt", "potsdam", "aachen", "mannheim", "heidelberg",
-    "regensburg", "ulm", "jena", "remote",
+    "regensburg", "ulm", "jena",
 )
 
 
@@ -51,7 +51,7 @@ def germany_relevant(location: str, remote: bool, url: str = "") -> bool:
     loc = (location or "").lower()
     if any(place in loc for place in GERMAN_LOCATIONS):
         return True
-    return bool(remote and "arbeitnow.com" in (url or "").lower())
+    # A remote flag alone does not establish Germany eligibility.\n    # Unspecified remote jobs must be reviewed instead of silently accepted.\n    return False
 
 
 def parse_timestamp(value) -> datetime | None:
@@ -216,7 +216,7 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
     fetched = 0
     for name, rows in results.items():
         deduped = {(item["source"], item["source_id"]): item for item in rows}
-        db.query(LiveJob).filter(LiveJob.source == name).delete(synchronize_session=False)
+        # A successful-but-empty feed may be a temporary upstream incident.\n        # Retain the last known snapshot instead of deleting all opportunities.\n        if not deduped:\n            errors.append(f"{name}: empty response; retained previous snapshot")\n            continue\n        db.query(LiveJob).filter(LiveJob.source == name).delete(synchronize_session=False)
         for item in deduped.values():
             db.add(LiveJob(
                 source=item["source"],

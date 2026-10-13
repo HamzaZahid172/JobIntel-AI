@@ -42,6 +42,9 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
     else:
         decision = "Skip"
 
+    if age_days is not None and age_days > 45 and decision == "Apply Now":
+        decision = "Review"
+
     title = (getattr(job, "title", "") or "").lower()
     descriptions = (getattr(job, "job_types", "") or "").lower()
     # Block adjacent non-engineering roles: keyword overlap alone must never
@@ -66,6 +69,8 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
         f"Posted: {age_days} days ago" if age_days is not None else "Posting date not supplied",
         "Direct employer ATS source" if direct else "External job feed (verify employer listing)",
     ]
+    if age_days is not None and age_days > 45:
+        reasons.append("Older posting: confirm vacancy is still open before applying")
     if uncertainty:
         reasons.append("Eligibility to verify: " + "; ".join(uncertainty[:3]))
         if decision == "Apply Now":
