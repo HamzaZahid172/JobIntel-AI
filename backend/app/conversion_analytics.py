@@ -39,11 +39,16 @@ def application_analytics(applications) -> dict:
         interviews=sum(1 for a in entries if a.status in final_interviews)
         rejections=sum(1 for a in entries if a.status=="Rejected")
         offers=sum(1 for a in entries if a.status=="Offer")
+        pending=sum(1 for a in entries if a.status in {"Applied","Screening"})
+        decided=interviews+rejections
         return {
+            "pending_or_screening":pending,
+            "decided_outcomes":decided,
+            "decided_interview_conversion_percent":round(100*interviews/decided,1) if decided else None,
             "applications":n,"interviews_or_later":interviews,
             "rejected":rejections,"offers":offers,
             "interview_conversion_percent":round(100*interviews/n,1) if n else 0,
-            "sample_warning":n<30,
+            "sample_warning":n<30 or decided<10,
         }
     return {
         "total_applications":total,
