@@ -33,3 +33,12 @@ def test_product_manager_cannot_get_apply_now_from_keyword_overlap():
     result = opportunity_assessment(job, report)
     assert result["decision"] == "Skip"
     assert result["score"] <= 34
+
+
+def test_ats_does_not_confirm_skill_without_raw_cv_evidence():
+    result=ats_review("Experience: Built Python REST services. Education: university. Skills: Python. Contact: dev@example.org",
+                      {"requirements":{"required_skills":["Python","Kubernetes"]},
+                       "matched_required_skills":["Python","Kubernetes"],"hard_blockers":[]})
+    assert "Kubernetes" in result["required_skills_missing"]
+    assert "Kubernetes" in result["previously_matched_without_cv_evidence"]
+    assert not result["pass_guarantee"]

@@ -1,6 +1,7 @@
 import html
 import logging
 import re
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -51,7 +52,9 @@ def germany_relevant(location: str, remote: bool, url: str = "") -> bool:
     loc = (location or "").lower()
     if any(place in loc for place in GERMAN_LOCATIONS):
         return True
-    # A remote flag alone does not establish Germany eligibility.\n    # Unspecified remote jobs must be reviewed instead of silently accepted.\n    return False
+    # A remote flag alone does not establish Germany eligibility.
+    # Unspecified remote jobs must be reviewed instead of silently accepted.
+    return False
 
 
 def parse_timestamp(value) -> datetime | None:
@@ -176,6 +179,25 @@ def fetch_remotive(client: httpx.Client, limit: int = 100) -> list[dict]:
     return jobs
 
 
+def canonical_job_url(url: str) -> str:
+    """Remove tracking parameters and fragments when identifying repeated vacancies."""
+    try:
+        parts = urlsplit(url or "")
+        if parts.scheme not in {"https", "http"} or not parts.hostname:
+            return ""
+        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), "", ""))
+    except ValueError:
+        return ""
+
+
+def duplicate_key(item: dict) -> tuple[str, str]:
+    """Conservative cross-source dedupe using canonical employer URL when shared."""
+    normalized_url = canonical_job_url(item.get("url") or "")
+    if normalized_url:
+        return ("url", normalized_url)
+    return ("source", str(item.get("source") or "") + ":" + str(item.get("source_id") or ""))
+
+
 def sync_current_jobs(db: Session, force: bool = False) -> dict:
     now = datetime.utcnow()
     latest_general = (
@@ -215,8 +237,13 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
     # from any source whose API temporarily failed.
     fetched = 0
     for name, rows in results.items():
-        deduped = {(item["source"], item["source_id"]): item for item in rows}
-        # A successful-but-empty feed may be a temporary upstream incident.\n        # Retain the last known snapshot instead of deleting all opportunities.\n        if not deduped:\n            errors.append(f"{name}: empty response; retained previous snapshot")\n            continue\n        db.query(LiveJob).filter(LiveJob.source == name).delete(synchronize_session=False)
+        deduped = {duplicate_key(item): item for item in rows}
+        # A successful-but-empty feed may be a temporary upstream incident.
+        # Retain the last known snapshot instead of deleting all opportunities.
+        if not deduped:
+            errors.append(f"{name}: empty response; retained previous snapshot")
+            continue
+        db.query(LiveJob).filter(LiveJob.source == name).delete(synchronize_session=False)
         for item in deduped.values():
             db.add(LiveJob(
                 source=item["source"],
@@ -244,6 +271,8 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
         "sources": list(FEED_SOURCES),
         "cached": False,
         "remotive_cached": not remotive_due,
+        "snapshot_preserved": any("retained previous snapshot" in error for error in errors),
+        "freshness_warning": "Job feed timestamps show ingestion, not employer-confirmed vacancy status.",
     }
 
 

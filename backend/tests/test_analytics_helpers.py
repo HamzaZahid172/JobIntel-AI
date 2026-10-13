@@ -109,3 +109,25 @@ def test_pending_applications_separate_from_decided_outcomes():
     assert overall["decided_outcomes"] == 2
     assert overall["decided_interview_conversion_percent"] == 50.0
     assert overall["sample_warning"]
+
+
+def test_no_interview_diagnostic_does_not_invent_causes():
+    from app.conversion_analytics import application_analytics
+    entries=[SimpleNamespace(role="Backend Engineer",url="https://example.com/1",
+                             cv_version="v1",status="Rejected") for _ in range(10)]
+    result=application_analytics(entries)["overall"]
+    assert result["zero_interview_diagnostic"]
+    assert "no single cause" in result["diagnostic"]
+
+
+def test_cross_source_job_duplicates_hidden_without_database_deletion():
+    from app.main import candidate_job_records
+    same="https://employer.example/careers/backend?utm_source=jobicy"
+    jobs=[
+        SimpleNamespace(source="Jobicy",source_id="a",url=same,posted_at=datetime(2026,10,1)),
+        SimpleNamespace(source="Arbeitnow",source_id="b",url="https://employer.example/careers/backend?ref=arbeitnow",posted_at=datetime(2026,10,2)),
+        SimpleNamespace(source="Remotive",source_id="c",url="https://other.example/careers/backend",posted_at=datetime(2026,10,2)),
+    ]
+    results=candidate_job_records(None,jobs)
+    assert len(results)==2
+    assert any(job.source=="Arbeitnow" for job,_ in results)
