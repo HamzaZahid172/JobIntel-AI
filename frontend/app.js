@@ -1687,7 +1687,7 @@ async function renderSettingsPage(){
         '<button class="primary" type="submit">Save verified application profile</button></form></div>' +
       '<div class="card detailPage">' +
         '<h2>Private document vault</h2>' +
-        '<p>Upload each CV version and supporting letter once. Files are encrypted and stored in a persistent local Docker volume.</p>' +
+        '<p>For better matches, save separate QA Automation, Backend/Python and Data Engineering CV versions, each under its correct role family. Use a clean one-column layout, and verify titles and dates against official experience records. Your documents stay encrypted in the local Docker volume.</p>' +
         '<form id="candidateVaultUpload"><label>Document type<select name="kind"><option value="cv">CV / Resume</option><option value="experience">Experience letter</option><option value="cover">Reusable cover letter</option></select></label>' +
         '<label>CV role family<select name="role_family"><option value="general">General</option><option value="qa">QA Automation</option><option value="data">Data Engineering</option><option value="backend">Backend / AI</option></select></label>' +
         '<label>Original document<input name="document" type="file" accept=".pdf,.doc,.docx,.txt" required></label>' +
