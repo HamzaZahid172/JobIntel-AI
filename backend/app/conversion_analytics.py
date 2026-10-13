@@ -68,5 +68,5 @@ def application_analytics(applications) -> dict:
             if total<30 else
             "Observed tracker outcomes, not employer hiring probabilities."
         ),
-        "notes":"Interview conversion counts Interview, Final and Offer among tracked applications.",
+        "notes":"Interview conversion counts Interview, Final and Offer among tracked applications. Pending does not mean rejected. Decided outcomes are a limited subset, not an estimate of hiring probability.",
     }
