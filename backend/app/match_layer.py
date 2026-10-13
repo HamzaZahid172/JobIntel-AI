@@ -279,6 +279,8 @@ def build_match_report(
     if missing_required:
         reasons.append("Missing core skills: " + ", ".join(missing_required[:6]))
     reasons.append(location_reason)
+    if location_score < 60:
+        reasons.append("Verify Germany work-location eligibility with employer before applying.")
 
     readiness = "Strong" if overall >= 80 else "Good" if overall >= 65 else "Low"
 

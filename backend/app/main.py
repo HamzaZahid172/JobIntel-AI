@@ -109,7 +109,7 @@ from .schemas import (
     ProfileUpdate,
     RegisterRequest,
 )
-from .sources import latest_cv, rescore_jobs, sync_current_jobs
+from .sources import canonical_job_url, latest_cv, rescore_jobs, sync_current_jobs
 
 logger = logging.getLogger("jobintel")
 
@@ -215,11 +215,24 @@ def _target_role_families(target_roles: str = "") -> set[str]:
     return families
 
 
+def _deduplicate_candidate_jobs(jobs: list[LiveJob]) -> list[LiveJob]:
+    """Hide cross-feed URL duplicates without deleting source records."""
+    result = {}
+    for job in jobs:
+        url_key = canonical_job_url(job.url or "")
+        key = ("url", url_key) if url_key else ("source", job.source, job.source_id)
+        previous = result.get(key)
+        if previous is None or (job.posted_at or datetime.min) > (previous.posted_at or datetime.min):
+            result[key] = job
+    return list(result.values())
+
+
 def candidate_job_records(
     cv: CVProfile | None,
     jobs: list[LiveJob],
     target_roles: str = "",
 ) -> list[tuple[LiveJob, dict | None]]:
+    jobs = _deduplicate_candidate_jobs(jobs)
     if not cv:
         return [(job, None) for job in jobs]
 

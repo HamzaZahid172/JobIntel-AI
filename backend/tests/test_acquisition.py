@@ -105,3 +105,28 @@ def test_old_job_requires_reconfirmation_before_apply_now():
     result = opportunity_assessment(job, {"overall_score": 96, "role_score": 95, "hard_blockers": []})
     assert result["decision"] == "Review"
     assert any("Older posting" in reason for reason in result["reasons"])
+
+
+def test_unknown_posting_date_requires_review():
+    job = SimpleNamespace(id=11,title="Backend Python Engineer",source="Greenhouse",job_types="",posted_at=None)
+    result = opportunity_assessment(job,{"overall_score":98,"role_score":95,"hard_blockers":[]})
+    assert result["decision"] != "Apply Now"
+    assert any("Unverified posting date" in reason for reason in result["reasons"])
+
+
+def test_tailored_summary_never_adds_unverified_matched_skill():
+    job = SimpleNamespace(id=10,title="Backend Engineer",company="Employer")
+    result = cv_tailoring_draft("Built Python APIs and automated tests.",job, {
+        "matched_required_skills":["Python","Kubernetes"],"missing_required_skills":[]})
+    assert "Kubernetes" not in result["suggested_summary"]
+    assert "Kubernetes" not in result["matched_skills"]
+
+
+def test_cv_tailoring_selects_role_focus_using_only_cv_evidence():
+    data_job=SimpleNamespace(id=1,title="Data Engineer",company="Test Company")
+    result=cv_tailoring_draft("Built Python ETL pipelines.",data_job,{"matched_required_skills":["Python","Kafka"]})
+    assert result["role_focus"]=="data engineering"
+    assert "Kafka" not in result["suggested_summary"]
+    qa_job=SimpleNamespace(id=2,title="QA Automation Engineer",company="Test Company")
+    qa=cv_tailoring_draft("Built automation using Playwright.",qa_job,{"matched_required_skills":["Playwright"]})
+    assert qa["role_focus"]=="QA automation"
