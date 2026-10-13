@@ -40,9 +40,15 @@ def application_analytics(applications) -> dict:
         rejections=sum(1 for a in entries if a.status=="Rejected")
         offers=sum(1 for a in entries if a.status=="Offer")
         pending=sum(1 for a in entries if a.status in {"Applied","Screening"})
+        no_response=sum(1 for a in entries if a.status in {"Applied","Screening"})
+        needs_review=bool(n >= 10 and interviews == 0)
+
         decided=interviews+rejections
         return {
             "pending_or_screening":pending,
+            "awaiting_outcome":no_response,
+            "zero_interview_diagnostic":needs_review,
+            "diagnostic":"Review eligibility, CV targeting, and submission confirmation; no single cause can be inferred." if needs_review else None,
             "decided_outcomes":decided,
             "decided_interview_conversion_percent":round(100*interviews/decided,1) if decided else None,
             "applications":n,"interviews_or_later":interviews,
