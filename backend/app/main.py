@@ -185,6 +185,8 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
         "match": details["overall_score"] if details else job.match_score,
         "opportunity": opportunity_assessment(job, details) if details else None,
         "recommended_cv_family": job_role_family(job.title),
+        "cv_used_filename": details.get("cv_used_filename") if details else None,
+        "cv_used_id": details.get("cv_used_id") if details else None,
         "role_score": details["role_score"] if details else None,
         "matched_skills": details["matched_skills"] if details else [],
         "missing_skills": details["missing_skills"] if details else [],
@@ -233,19 +235,27 @@ def candidate_job_records(
     cv: CVProfile | None,
     jobs: list[LiveJob],
     target_roles: str = "",
+    cv_tracks: dict[str, CVProfile] | None = None,
 ) -> list[tuple[LiveJob, dict | None]]:
     jobs = _deduplicate_candidate_jobs(jobs)
     if not cv:
         return [(job, None) for job in jobs]
 
-    strongest = {item["skill"] for item in rank_cv_skills(cv.text, limit=10)}
     target_families = _target_role_families(target_roles)
     records: list[tuple[LiveJob, dict]] = []
+    skills_cache = {}
     for job in jobs:
-        details = match_details(cv, job)
+        selected_cv = (cv_tracks or {}).get(job_role_family(job.title), cv)
+        if selected_cv.id not in skills_cache:
+            skills_cache[selected_cv.id] = {
+                item["skill"] for item in rank_cv_skills(selected_cv.text, limit=10)
+            }
+        details = match_details(selected_cv, job)
+        details["cv_used_id"] = selected_cv.id
+        details["cv_used_filename"] = selected_cv.filename
         job_skills = set(details["job_skills"])
         job_families = set(details["job_role_families"])
-        strong_overlap = strongest & job_skills
+        strong_overlap = skills_cache[selected_cv.id] & job_skills
         if target_families and job_families and not (target_families & job_families):
             continue
         if details["hard_blockers"]:
@@ -851,6 +861,29 @@ def sources(user: User = Depends(get_current_user)):
     }
 
 
+def cv_tracks_for_user(db: Session, user_id: int) -> dict[str, CVProfile]:
+    """Resolve saved default CV profiles once per request, not once per job."""
+    rows = db.query(CandidateDocument).filter(
+        CandidateDocument.user_id == user_id,
+        CandidateDocument.kind == "cv",
+        CandidateDocument.role_family.in_(("qa", "backend", "data")),
+    ).order_by(CandidateDocument.default_document.desc(),
+               CandidateDocument.created_at.desc()).all()
+    selected = {}
+    for row in rows:
+        if row.role_family not in selected and row.cv_profile_id:
+            selected[row.role_family] = row.cv_profile_id
+    if not selected:
+        return {}
+    profiles = db.query(CVProfile).filter(
+        CVProfile.user_id == user_id,
+        CVProfile.id.in_(list(selected.values())),
+    ).all()
+    by_id = {profile.id: profile for profile in profiles}
+    return {family: by_id[cv_id] for family, cv_id in selected.items()
+            if cv_id in by_id}
+
+
 @app.get("/api/jobs")
 def jobs(
     limit: int = 300,
@@ -863,7 +896,8 @@ def jobs(
     if include_all or not cv:
         records = [(job, match_details(cv, job) if cv else None) for job in live_jobs]
     else:
-        records = candidate_job_records(cv, live_jobs, user.target_roles)
+        records = candidate_job_records(cv, live_jobs, user.target_roles,
+                                        cv_tracks_for_user(db, user.id))
     if cv:
         records.sort(
             key=lambda row: opportunity_assessment(row[0], row[1])["score"],
@@ -1049,12 +1083,16 @@ def action_center(
         for app in applications
     }
     assessments = []
+    cv_tracks = cv_tracks_for_user(db, user.id)
     for job in jobs_all:
         if job.url.rstrip("/").lower() in tracked_urls or (
             job.company.lower().strip(), job.title.lower().strip()
         ) in tracked_pairs:
             continue
-        report = match_details(cv, job)
+        selected_cv = cv_tracks.get(job_role_family(job.title), cv)
+        report = match_details(selected_cv, job)
+        report["cv_used_id"] = selected_cv.id
+        report["cv_used_filename"] = selected_cv.filename
         opportunity = opportunity_assessment(job, report)
         if opportunity["decision"] == "Skip":
             continue
@@ -1833,7 +1871,8 @@ def get_cv(user: User = Depends(get_current_user), db: Session = Depends(get_db)
         return {"uploaded": False}
 
     details = refresh_cv_analysis(db, cv)
-    relevant = candidate_job_records(cv, db.query(LiveJob).all(), user.target_roles)
+    relevant = candidate_job_records(cv, db.query(LiveJob).all(), user.target_roles,
+                                     cv_tracks_for_user(db, user.id))
     top_skills = rank_cv_skills(cv.text, [job.skills for job, _ in relevant], limit=12)
     return {
         "uploaded": True,
@@ -2026,7 +2065,8 @@ def dashboard(user: User = Depends(get_current_user), db: Session = Depends(get_
     counts = {status: sum(1 for app in apps if app.status == status) for status in statuses}
     interview_count = counts["Interview"] + counts["Final"] + counts["Offer"]
 
-    records = candidate_job_records(cv, all_jobs, user.target_roles)
+    records = candidate_job_records(cv, all_jobs, user.target_roles,
+                                    cv_tracks_for_user(db, user.id))
     relevant_jobs = [job for job, _ in records]
     today = date.today()
     new_today = sum(1 for job in relevant_jobs if job.posted_at and job.posted_at.date() == today)
