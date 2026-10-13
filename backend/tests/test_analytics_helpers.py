@@ -95,3 +95,17 @@ def test_application_conversion_insights_flags_high_match_rejections():
     assert result["high_match_rejections"] == 2
     assert result["rejection_rate"] == 50
     assert any("positioning problem" in item for item in result["recommendations"])
+
+def test_pending_applications_separate_from_decided_outcomes():
+    from types import SimpleNamespace
+    from app.conversion_analytics import application_analytics
+    def entry(status):
+        return SimpleNamespace(role="Backend Engineer", url="https://example.org/job",
+                               cv_version="CV-1", status=status)
+    result = application_analytics([entry("Applied"), entry("Applied"),
+                                    entry("Rejected"), entry("Interview")])
+    overall = result["overall"]
+    assert overall["pending_or_screening"] == 2
+    assert overall["decided_outcomes"] == 2
+    assert overall["decided_interview_conversion_percent"] == 50.0
+    assert overall["sample_warning"]
