@@ -36,6 +36,7 @@ from .job_acquisition import (
 from .ats_collectors import PROVIDER_SOURCE, sync_configured_ats
 from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
 from .document_vault import store_document, read_document, public_document, choose_document
+from .pre_application_review import job_role_family, pre_application_review
 from .auth import (
     claim_legacy_workspace,
     create_session,
@@ -1074,6 +1075,51 @@ def action_center(
     }
 
 
+def resolve_job_cv(db: Session, user_id: int, job: LiveJob,
+                   cv_id: int | None = None) -> tuple[CVProfile | None, str, bool]:
+    """Use the saved job-family CV when no explicit CV version is requested."""
+    role = job_role_family(job.title)
+    chosen = choose_document(db, user_id, "cv", role)
+    if cv_id is not None:
+        cv = db.query(CVProfile).filter(
+            CVProfile.id == cv_id, CVProfile.user_id == user_id
+        ).first()
+        saved = db.query(CandidateDocument).filter(
+            CandidateDocument.user_id == user_id,
+            CandidateDocument.kind == "cv",
+            CandidateDocument.cv_profile_id == cv_id,
+        ).order_by(CandidateDocument.default_document.desc()).first()
+        return cv, saved.role_family if saved else "general", bool(saved)
+    if chosen and chosen.cv_profile_id:
+        cv = db.query(CVProfile).filter(
+            CVProfile.id == chosen.cv_profile_id,
+            CVProfile.user_id == user_id,
+        ).first()
+        if cv:
+            return cv, chosen.role_family, True
+    return latest_cv(db, user_id), "general", False
+
+
+@app.get("/api/jobs/{job_id}/application-quality")
+def application_quality(
+    job_id: int, cv_id: int | None = None,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    cv, family, saved = resolve_job_cv(db, user.id, job, cv_id)
+    if not cv:
+        raise HTTPException(400, "Upload your CV before reviewing an application.")
+    details = match_details(cv, job)
+    return {
+        "job_id": job.id, "cv_id": cv.id,
+        "review": pre_application_review(job, cv, details,
+                   selected_role=family, saved_cv=saved),
+    }
+
+
 @app.get("/api/cv/versions")
 def cv_versions(
     user: User = Depends(get_current_user),
@@ -1086,8 +1132,16 @@ def cv_versions(
         .limit(30)
         .all()
     )
+    ids = [row.id for row in profiles]
+    documents = db.query(CandidateDocument).filter(
+        CandidateDocument.user_id == user.id,
+        CandidateDocument.kind == "cv",
+        CandidateDocument.cv_profile_id.in_(ids),
+    ).all() if ids else []
+    families = {doc.cv_profile_id: doc.role_family for doc in documents}
     return [{"id": row.id, "filename": row.filename,
              "uploaded_at": row.uploaded_at.isoformat(),
+             "role_family": families.get(row.id, "general"),
              "ats_score": row.ats_score} for row in profiles]
 
 
@@ -1101,12 +1155,7 @@ def tailor_cv(
     job = db.get(LiveJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found.")
-    cv = (
-        db.query(CVProfile)
-        .filter(CVProfile.id == cv_id, CVProfile.user_id == user.id)
-        .first()
-        if cv_id is not None else latest_cv(db, user.id)
-    )
+    cv, _, _ = resolve_job_cv(db, user.id, job, cv_id)
     if not cv:
         raise HTTPException(400, "Upload a CV or select one of your own CV versions.")
     report = match_details(cv, job)
@@ -1201,12 +1250,7 @@ def job_ats_review(
     job = db.get(LiveJob, job_id)
     if not job:
         raise HTTPException(404, "Job not found.")
-    cv = (
-        db.query(CVProfile)
-        .filter(CVProfile.id == cv_id, CVProfile.user_id == user.id)
-        .first()
-        if cv_id is not None else latest_cv(db, user.id)
-    )
+    cv, _, _ = resolve_job_cv(db, user.id, job, cv_id)
     if not cv:
         raise HTTPException(400, "Upload or select your CV first.")
     return {"cv_filename": cv.filename, "job": serialize_job(job),
@@ -1489,12 +1533,7 @@ async def prepare_application(
     if not job:
         raise HTTPException(404, "Job not found.")
 
-    cv = (
-        db.query(CVProfile)
-        .filter(CVProfile.id == payload.cv_id, CVProfile.user_id == user.id)
-        .first()
-        if payload.cv_id is not None else latest_cv(db, user.id)
-    )
+    cv, _, _ = resolve_job_cv(db, user.id, job, payload.cv_id)
     if not cv:
         raise HTTPException(400, "Upload or select one of your own CV versions before preparation.")
 
@@ -1867,11 +1906,7 @@ def selected_documents_for_job(
     job = db.get(LiveJob, job_id)
     if job is None:
         raise HTTPException(404, "Job not found.")
-    title = job.title.lower()
-    family = ("qa" if any(x in title for x in ("qa", "quality", "test engineer", "sdet"))
-              else "data" if any(x in title for x in ("data engineer", "etl", "analytics engineer"))
-              else "backend" if any(x in title for x in ("backend", "fullstack", "full stack", "ai engineer"))
-              else "general")
+    family = job_role_family(job.title)
     docs = {}
     for kind in ("cv", "experience", "cover"):
         row = choose_document(db, user.id, kind, family if kind == "cv" else "general")
