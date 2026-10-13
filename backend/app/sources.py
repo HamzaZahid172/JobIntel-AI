@@ -271,6 +271,8 @@ def sync_current_jobs(db: Session, force: bool = False) -> dict:
         "sources": list(FEED_SOURCES),
         "cached": False,
         "remotive_cached": not remotive_due,
+        "snapshot_preserved": any("retained previous snapshot" in error for error in errors),
+        "freshness_warning": "Job feed timestamps show ingestion, not employer-confirmed vacancy status.",
     }
 
 
