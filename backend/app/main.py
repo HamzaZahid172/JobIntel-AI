@@ -475,7 +475,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="JobIntel AI API", version="0.7.1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("JOBINTEL_ALLOWED_ORIGINS", "http://localhost:3100,http://127.0.0.1:3100").split(",") if origin.strip()],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
