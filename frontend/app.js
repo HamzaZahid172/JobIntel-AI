@@ -1616,7 +1616,7 @@ async function renderSettingsPage(){
     '<div class="detailGrid">' +
       '<div class="card detailPage googleSignInSettings">' +
         '<h2>Google &amp; Email Connections</h2>' +
-        '<p>Optional account sign-in. Google ID verification is separate from Gmail mailbox permissions.</p>' +
+        '<p>Linking a Google identity is optional. Mailbox reading and sending require separate permission and are managed below.</p>' +
         (googleSignIn.linked?
           '<p><span class="pill good">Linked</span> '+esc(googleSignIn.google_email)+'</p>':
           googleSignIn.configured?
@@ -1669,7 +1669,7 @@ async function renderSettingsPage(){
       '</div>' +
       '<div class="card detailPage">' +
         '<h2>Gmail permissions &amp; application tracking</h2>' +
-        '<p>Connect Gmail with read-only access. JobIntel scans recent messages, matches them to tracked applications, and can update outcomes such as Screening, Interview, Offer or Rejected.</p>' +
+        '<p>This is the Gmail permission area for your Google connection, not a second JobIntel login. Reading and sending are authorized separately. JobIntel matches messages with tracked applications.</p>' +
         (gmail.connected
           ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button>'+(gmail.can_send?'<span class="pill good">Send authorized</span>':'<button id="gmailSendPermissionButton" class="secondary" type="button">Enable Gmail sending</button>')+'<button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
           : (gmail.configured
