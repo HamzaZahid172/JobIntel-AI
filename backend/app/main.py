@@ -184,6 +184,7 @@ def serialize_job(job: LiveJob, details: dict | None = None) -> dict:
         "job_types": [s for s in job.job_types.split(",") if s],
         "match": details["overall_score"] if details else job.match_score,
         "opportunity": opportunity_assessment(job, details) if details else None,
+        "recommended_cv_family": job_role_family(job.title),
         "role_score": details["role_score"] if details else None,
         "matched_skills": details["matched_skills"] if details else [],
         "missing_skills": details["missing_skills"] if details else [],
