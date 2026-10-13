@@ -1602,20 +1602,20 @@ async function renderAnalyticsPage(){
 }
 
 async function renderSettingsPage(){
-  const googleSignIn=await apiFetch('/api/auth/google/status').catch(function(){
-    return {configured:false,linked:false};
-  });
-  const verifiedProfile=await apiFetch('/api/candidate-profile');
-  const vaultDocuments=await apiFetch('/api/documents');
-  const sources=await apiFetch('/api/sources');
-  const status=await apiFetch('/api/assistant/status');
-  const targets=await apiFetch('/api/collector-targets');
-  const gmail=await apiFetch('/api/gmail/status').catch(function(){return {configured:false,connected:false};});
+  const [googleSignIn,verifiedProfile,vaultDocuments,sources,status,targets,gmail] = await Promise.all([
+    apiFetch('/api/auth/google/status').catch(()=>({configured:false,linked:false})),
+    apiFetch('/api/candidate-profile'),
+    apiFetch('/api/documents'),
+    apiFetch('/api/sources'),
+    apiFetch('/api/assistant/status').catch(()=>({mode:'Unavailable',ollama_online:false,model:'Unknown'})),
+    apiFetch('/api/collector-targets'),
+    apiFetch('/api/gmail/status').catch(()=>({configured:false,connected:false}))
+  ]);
 
   document.querySelector('#pageContent').innerHTML=
     '<div class="detailGrid">' +
       '<div class="card detailPage googleSignInSettings">' +
-        '<h2>Google Sign-In</h2>' +
+        '<h2>Google &amp; Email Connections</h2>' +
         '<p>Optional account sign-in. Google ID verification is separate from Gmail mailbox permissions.</p>' +
         (googleSignIn.linked?
           '<p><span class="pill good">Linked</span> '+esc(googleSignIn.google_email)+'</p>':
@@ -1668,7 +1668,7 @@ async function renderSettingsPage(){
         '<p class="policyNote">XING and StepStone remain manual/authorized integrations. Direct employer ATS collectors are preferred for automated acquisition.</p>' +
       '</div>' +
       '<div class="card detailPage">' +
-        '<h2>Gmail application tracking</h2>' +
+        '<h2>Gmail permissions &amp; application tracking</h2>' +
         '<p>Connect Gmail with read-only access. JobIntel scans recent messages, matches them to tracked applications, and can update outcomes such as Screening, Interview, Offer or Rejected.</p>' +
         (gmail.connected
           ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button>'+(gmail.can_send?'<span class="pill good">Send authorized</span>':'<button id="gmailSendPermissionButton" class="secondary" type="button">Enable Gmail sending</button>')+'<button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
