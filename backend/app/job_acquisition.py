@@ -168,14 +168,14 @@ def cv_tailoring_draft(cv_text: str, job, match: dict) -> dict:
     matched = list(match.get("matched_required_skills") or match.get("matched_skills") or [])
     missing = list(match.get("missing_required_skills") or [])
     evidence = _cv_evidence(cv_text, matched)
-    evidenced = [skill for skill in matched if re.search(r"(?<!\\w)" + re.escape(skill) + r"(?!\\w)", cv_text or "", re.I)]
+    evidenced = [skill for skill in matched if re.search(r"(?<!\w)" + re.escape(skill) + r"(?!\w)", cv_text or "", re.I)]
     highlights = ", ".join(evidenced[:5])
     role_title = (job.title or "").lower()
-    if re.search(r"\\b(?:qa|sdet|test automation|automation engineer|quality assurance)\\b", role_title):
+    if re.search(r"\b(?:qa|sdet|test automation|automation engineer|quality assurance)\b", role_title):
         role_focus = "QA automation"
-    elif re.search(r"\\b(?:data engineer|etl|data infrastructure|analytics engineer)\\b", role_title):
+    elif re.search(r"\b(?:data engineer|etl|data infrastructure|analytics engineer)\b", role_title):
         role_focus = "data engineering"
-    elif re.search(r"\\b(?:backend|python|software engineer|fastapi)\\b", role_title):
+    elif re.search(r"\b(?:backend|python|software engineer|fastapi)\b", role_title):
         role_focus = "backend/software engineering"
     else:
         role_focus = "software engineering"
