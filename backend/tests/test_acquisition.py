@@ -97,3 +97,11 @@ def test_remotive_api_normalizes_and_attributes_source():
     assert len(jobs) == 1
     assert jobs[0]["source"] == "Remotive"
     assert "remotive.com" in jobs[0]["url"]
+
+
+def test_old_job_requires_reconfirmation_before_apply_now():
+    job = SimpleNamespace(id=19, title="Backend Engineer", source="Greenhouse",
+                          job_types="full_time", posted_at=datetime.utcnow() - timedelta(days=60))
+    result = opportunity_assessment(job, {"overall_score": 96, "role_score": 95, "hard_blockers": []})
+    assert result["decision"] == "Review"
+    assert any("Older posting" in reason for reason in result["reasons"])
