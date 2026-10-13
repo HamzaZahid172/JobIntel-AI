@@ -20,3 +20,11 @@ def test_remote_location_must_confirm_germany():
     assert not germany_relevant("Remote", True, "https://example.com/jobs/1")
     assert not germany_relevant("USA only", True, "https://example.com/jobs/2")
     assert germany_relevant("Remote - Germany", True, "https://example.com/jobs/3")
+
+
+def test_canonical_job_url_removes_tracking_parameters():
+    from app.sources import canonical_job_url, duplicate_key
+    a = {"url":"https://example.org/jobs/backend?utm_source=board", "source":"A", "source_id":"1"}
+    b = {"url":"https://example.org/jobs/backend?ref=other", "source":"B", "source_id":"2"}
+    assert duplicate_key(a) == duplicate_key(b)
+    assert canonical_job_url("javascript:alert(1)") == ""
