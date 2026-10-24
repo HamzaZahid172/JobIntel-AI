@@ -1,5 +1,6 @@
 """Application conversion analytics: observed states, not predicted outcomes."""
 import re
+from datetime import date
 from collections import defaultdict
 from urllib.parse import urlparse
 
@@ -17,7 +18,8 @@ def role_family(role: str) -> str:
     return "Other"
 
 
-def application_analytics(applications) -> dict:
+def application_analytics(applications, *, today: date | None = None) -> dict:
+    today = today or date.today()
     groups=defaultdict(list)
     sources=defaultdict(list)
     cvs=defaultdict(list)
@@ -33,6 +35,34 @@ def application_analytics(applications) -> dict:
             source="Unknown"
         sources[source].append(app)
         cvs[(app.cv_version or "Unspecified")].append(app)
+
+    def has_submission_reference(entry):
+        """Tracking notes may document proof; lack of notes is NOT failure."""
+        return bool(re.search(
+            r"(?:confirmation (?:number|id|email)|application received|"
+            r"submission confirmed|successfully submitted|application submitted)",
+            getattr(entry, "notes", "") or "", re.I,
+        ))
+
+    review = {
+        "applications_without_cv_version": sum(
+            1 for a in applications if (getattr(a, "cv_version", "") or "").strip().lower()
+            in {"", "current cv", "unspecified"}
+        ),
+        "applications_without_source_url": sum(
+            1 for a in applications if not (getattr(a, "url", "") or "").strip()
+        ),
+        "applications_without_documented_submission_confirmation": sum(
+            1 for a in applications if a.status in {"Applied", "Screening", "Rejected"}
+            and not has_submission_reference(a)
+        ),
+        "pending_over_14_days": sum(
+            1 for a in applications if a.status in {"Applied", "Screening"}
+            and getattr(a, "applied_date", None) is not None
+            and (today - a.applied_date).days >= 14
+        ),
+        "note": "Missing confirmation in the tracker does not mean the employer failed to receive an application.",
+    }
 
     def summarize(entries):
         n=len(entries)
@@ -58,6 +88,7 @@ def application_analytics(applications) -> dict:
         }
     return {
         "total_applications":total,
+        "application_quality_audit":review,
         "overall":summarize(applications),
         "by_role":{k:summarize(v) for k,v in sorted(groups.items())},
         "by_source":{k:summarize(v) for k,v in sorted(sources.items())},

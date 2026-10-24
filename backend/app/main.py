@@ -893,11 +893,18 @@ def jobs(
 ):
     cv = latest_cv(db, user.id)
     live_jobs = db.query(LiveJob).order_by(LiveJob.posted_at.desc().nullslast()).all()
+    tracks = cv_tracks_for_user(db, user.id) if cv else {}
     if include_all or not cv:
-        records = [(job, match_details(cv, job) if cv else None) for job in live_jobs]
+        records = []
+        for job in live_jobs:
+            selected = tracks.get(job_role_family(job.title), cv)
+            details = match_details(selected, job) if selected else None
+            if details and selected:
+                details["cv_used_id"] = selected.id
+                details["cv_used_filename"] = selected.filename
+            records.append((job, details))
     else:
-        records = candidate_job_records(cv, live_jobs, user.target_roles,
-                                        cv_tracks_for_user(db, user.id))
+        records = candidate_job_records(cv, live_jobs, user.target_roles, tracks)
     if cv:
         records.sort(
             key=lambda row: opportunity_assessment(row[0], row[1])["score"],
@@ -936,20 +943,20 @@ def import_job(
         source_id=source_id,
         title=payload.title.strip(),
         company=payload.company.strip(),
-        location=payload.location.strip() or "Germany",
+        location=payload.location.strip() or "Location not verified",
         remote=payload.remote,
         url=payload.url.strip(),
         description=payload.description.strip(),
         skills=",".join(extract_skills(payload.title + " " + payload.description)),
         job_types="",
         match_score=None,
-        posted_at=datetime.utcnow(),
+        posted_at=None,  # Import time is not the employer's posting date.
         fetched_at=datetime.utcnow(),
     )
     db.add(job)
     db.commit()
     db.refresh(job)
-    cv = latest_cv(db, user.id)
+    cv, _, _ = resolve_job_cv(db, user.id, job)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
 
@@ -1306,13 +1313,14 @@ def job_match_report(
     if not job:
         raise HTTPException(404, "Job not found.")
 
-    cv = latest_cv(db, user.id)
+    cv, _, _ = resolve_job_cv(db, user.id, job)
     if not cv:
         raise HTTPException(400, "Upload your CV before calculating a match report.")
 
+    details = match_details(cv, job)
     return {
-        "job": serialize_job(job, match_details(cv, job)),
-        "match": match_details(cv, job),
+        "job": serialize_job(job, details),
+        "match": details,
         "cv": {
             "id": cv.id,
             "filename": cv.filename,
@@ -1330,7 +1338,7 @@ async def create_cover_letter_payload(
     if not job:
         raise HTTPException(404, "Job not found.")
 
-    cv = latest_cv(db, user.id)
+    cv, _, _ = resolve_job_cv(db, user.id, job)
     if not cv:
         raise HTTPException(400, "Upload your CV before generating a cover letter.")
 
@@ -1358,7 +1366,7 @@ async def create_cover_letter(
     if not job:
         raise HTTPException(404, "Job not found.")
 
-    cv = latest_cv(db, user.id)
+    cv, _, _ = resolve_job_cv(db, user.id, job)
     if not cv:
         raise HTTPException(400, "Upload your CV before generating a cover letter.")
 
@@ -2184,7 +2192,8 @@ async def assistant(
 ):
     cv = latest_cv(db, user.id)
     all_jobs = db.query(LiveJob).all()
-    records = candidate_job_records(cv, all_jobs, user.target_roles)
+    records = candidate_job_records(cv, all_jobs, user.target_roles,
+                                    cv_tracks_for_user(db, user.id))
     relevant_jobs = [job for job, _ in records]
     apps = db.query(Application).filter(Application.user_id == user.id).all()
 

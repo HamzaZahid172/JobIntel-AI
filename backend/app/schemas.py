@@ -56,7 +56,7 @@ class ManualJobImport(BaseModel):
     source: str = "Manual"
     title: str
     company: str
-    location: str = "Germany"
+    location: str = ""
     url: str = ""
     description: str
     remote: bool = False

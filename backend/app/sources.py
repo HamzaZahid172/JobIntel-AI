@@ -88,7 +88,7 @@ def fetch_arbeitnow(client: httpx.Client, pages: int = 3) -> list[dict]:
         for item in rows:
             description = strip_html(item.get("description"))
             title = item.get("title") or ""
-            location = item.get("location") or "Germany"
+            location = item.get("location") or "Location not verified"
             remote = bool(item.get("remote"))
             url = item.get("url") or ""
             if not relevant_role(title, description) or not germany_relevant(location, remote, url):
@@ -122,13 +122,18 @@ def fetch_jobicy(client: httpx.Client, count: int = 100) -> list[dict]:
         title = item.get("jobTitle") or ""
         if not relevant_role(title, description):
             continue
+        location = item.get("jobGeo") or ""
+        # A geo-filtered API request is not proof of each individual vacancy's
+        # work-location eligibility. Reject unverified or restricted regions.
+        if not (germany_relevant(location, True) or remotive_germany_eligible(location)):
+            continue
         industries = listish(item.get("jobIndustry"))
         jobs.append({
             "source": "Jobicy",
             "source_id": str(item.get("id") or item.get("url")),
             "title": title,
             "company": item.get("companyName") or "Unknown",
-            "location": item.get("jobGeo") or "Remote · Germany",
+            "location": location,
             "remote": True,
             "url": item.get("url") or "",
             "description": description,
