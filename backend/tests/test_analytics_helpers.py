@@ -131,3 +131,25 @@ def test_cross_source_job_duplicates_hidden_without_database_deletion():
     results=candidate_job_records(None,jobs)
     assert len(results)==2
     assert any(job.source=="Arbeitnow" for job,_ in results)
+
+
+def test_application_audit_keeps_missing_documentation_distinct_from_failure():
+    from datetime import date
+    from app.conversion_analytics import application_analytics
+    rows=[
+        SimpleNamespace(role="QA Automation Engineer",url="",cv_version="Current CV",
+                        notes="",status="Applied",applied_date=date(2026,10,1)),
+        SimpleNamespace(role="Backend Engineer",url="https://employer.example/jobs/3",
+                        cv_version="backend.pdf",notes="Confirmation ID: ABC123",
+                        status="Rejected",applied_date=date(2026,10,10)),
+        SimpleNamespace(role="Backend Engineer",url="https://employer.example/jobs/4",
+                        cv_version="backend.pdf",notes="",status="Screening",
+                        applied_date=date(2026,10,22))
+    ]
+    data=application_analytics(rows,today=date(2026,10,24))
+    audit=data["application_quality_audit"]
+    assert audit["applications_without_cv_version"]==1
+    assert audit["applications_without_source_url"]==1
+    assert audit["applications_without_documented_submission_confirmation"]==2
+    assert audit["pending_over_14_days"]==1
+    assert "does not mean" in audit["note"]
