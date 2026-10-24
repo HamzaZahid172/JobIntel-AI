@@ -42,6 +42,14 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
     else:
         decision = "Skip"
 
+    # External aggregators are discovery tools, not evidence that the employer
+    # is currently hiring or accepts this candidate's location.
+    if decision == "Apply Now" and not direct:
+        decision = "Review"
+
+    requirement_data = (match or {}).get("requirements") or {}
+    if decision == "Apply Now" and not requirement_data.get("required_skills") and "requirements" in (match or {}):
+        decision = "Review"
     if age_days is None and decision == "Apply Now":
         decision = "Review"
     if age_days is not None and age_days > 90:
@@ -75,7 +83,12 @@ def opportunity_assessment(job, match: dict | None, *, today: date | None = None
         f"CV-job match: {round(score)}%",
         f"Posted: {age_days} days ago" if age_days is not None else "Posting date not supplied",
         "Direct employer ATS source" if direct else "External job feed (verify employer listing)",
+        "Technical fit is not an interview probability or confirmed employer eligibility.",
     ]
+    if not direct:
+        reasons.append("Find and confirm the current vacancy on the employer careers page before applying.")
+    if "requirements" in (match or {}) and not requirement_data.get("required_skills"):
+        reasons.append("Insufficient structured requirements to confidently prioritize this job.")
     if age_days is None:
         reasons.append("Unverified posting date: confirm vacancy is open")
     if age_days is not None and age_days > 90:
