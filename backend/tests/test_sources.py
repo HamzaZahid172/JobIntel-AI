@@ -28,3 +28,32 @@ def test_canonical_job_url_removes_tracking_parameters():
     b = {"url":"https://example.org/jobs/backend?ref=other", "source":"B", "source_id":"2"}
     assert duplicate_key(a) == duplicate_key(b)
     assert canonical_job_url("javascript:alert(1)") == ""
+
+
+def test_arbeitnow_missing_location_is_not_claimed_to_be_germany():
+    from app.sources import fetch_arbeitnow
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"data":[{"slug":"a","title":"Backend Engineer",
+                             "description":"Python software development",
+                             "location":None,"remote":True,"url":"https://example.org/job"}]}
+    class Client:
+        def get(self,url,params=None):return Response()
+    assert fetch_arbeitnow(Client(),pages=1)==[]
+
+
+def test_jobicy_filters_non_german_or_unknown_remote_locations():
+    from app.sources import fetch_jobicy
+    class Response:
+        def raise_for_status(self): pass
+        def json(self):
+            def row(i,location):
+                return {"id":i,"jobTitle":"Backend Python Engineer","jobDescription":"Python APIs",
+                        "companyName":"Employer","jobGeo":location,"url":"https://example.org/job"+str(i)}
+            return {"jobs":[row(1,"USA only"),row(2,None),row(3,"Germany"),row(4,"Europe")]}
+    class Client:
+        def get(self,url,params=None):return Response()
+    jobs=fetch_jobicy(Client())
+    assert len(jobs)==2
+    assert {job["location"] for job in jobs}=={"Germany","Europe"}
