@@ -956,7 +956,7 @@ def import_job(
     db.add(job)
     db.commit()
     db.refresh(job)
-    cv = latest_cv(db, user.id)
+    cv, _, _ = resolve_job_cv(db, user.id, job)
     details = match_details(cv, job) if cv else None
     return serialize_job(job, details)
 
