@@ -341,6 +341,9 @@ document.querySelector('#appForm').onsubmit = async e => {
   e.preventDefault();
   const f = Object.fromEntries(new FormData(e.target).entries());
   f.match_score = Number(f.match_score || 0);
+  if(f.status === 'Applied' && !window.confirm(
+    'Only mark Applied after you have submitted the form to the employer. Have you submitted it and checked the employer confirmation?'
+  )) return;
   try {
     await apiFetch('/api/applications', {
       method:'POST',
@@ -752,6 +755,7 @@ function openApplicationModal(job){
   form.elements.url.value = job ? job.url : '';
   form.elements.match_score.value = job && job.match != null ? Math.round(job.match) : 0;
   form.elements.cv_version.value = job && job.cv_used_filename || 'Current CV (verify before tracking)';
+  form.elements.status.value = 'Saved';
   document.querySelector('#modal').classList.remove('hidden');
 }
 
