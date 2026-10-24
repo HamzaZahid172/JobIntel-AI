@@ -130,3 +130,23 @@ def test_cv_tailoring_selects_role_focus_using_only_cv_evidence():
     qa_job=SimpleNamespace(id=2,title="QA Automation Engineer",company="Test Company")
     qa=cv_tailoring_draft("Built automation using Playwright.",qa_job,{"matched_required_skills":["Playwright"]})
     assert qa["role_focus"]=="QA automation"
+
+
+def test_aggregator_high_score_requires_employer_verification():
+    job=SimpleNamespace(id=3,title="Backend Engineer",source="Jobicy",
+                        posted_at=datetime.utcnow(),job_types="full_time")
+    match={"overall_score":99,"role_score":95,"hard_blockers":[],
+           "requirements":{"required_skills":["python"]}}
+    result=opportunity_assessment(job,match)
+    assert result["decision"]=="Review"
+    assert not result["direct_employer"]
+    assert any("employer careers page" in text for text in result["reasons"])
+
+
+def test_unstructured_vacancy_not_marked_apply_now():
+    job=SimpleNamespace(id=4,title="Backend Engineer",source="Ashby",
+                        posted_at=datetime.utcnow(),job_types="full_time")
+    match={"overall_score":99,"role_score":95,"hard_blockers":[],
+           "requirements":{"required_skills":[]}}
+    result=opportunity_assessment(job,match)
+    assert result["decision"]=="Review"
