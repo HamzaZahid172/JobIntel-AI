@@ -751,7 +751,7 @@ function openApplicationModal(job){
   form.elements.location.value = job ? job.location : 'Germany';
   form.elements.url.value = job ? job.url : '';
   form.elements.match_score.value = job && job.match != null ? Math.round(job.match) : 0;
-  form.elements.cv_version.value = 'Current CV';
+  form.elements.cv_version.value = job && job.cv_used_filename || 'Current CV (verify before tracking)';
   document.querySelector('#modal').classList.remove('hidden');
 }
 
@@ -1634,6 +1634,16 @@ async function renderAnalyticsPage(){
           row[1].applications+' applications · '+row[1].interviews_or_later+
           ' interview-stage · '+row[1].rejected+' rejected</span></div>';
       }).join('')+
+    '</div>'+
+    '<div class="card detailPage"><h2>Application quality audit</h2>'+
+      '<p class="muted">These indicate gaps in the tracking record, not confirmed submission failures or reasons for rejection.</p>'+
+      Object.entries({
+        'CV version not recorded': (conversion.application_quality_audit||{}).applications_without_cv_version||0,
+        'Employer vacancy URL missing': (conversion.application_quality_audit||{}).applications_without_source_url||0,
+        'Submission confirmation not documented': (conversion.application_quality_audit||{}).applications_without_documented_submission_confirmation||0,
+        'Pending for at least 14 days': (conversion.application_quality_audit||{}).pending_over_14_days||0
+      }).map(function(row){return '<div class="analyticsRow"><b>'+esc(row[0])+'</b><span>'+row[1]+'</span></div>';}).join('')+
+      '<p class="muted">'+esc((conversion.application_quality_audit||{}).note||'')+'</p>'+
     '</div>'+
     '<div class="card detailPage"><h2>CV version performance</h2>'+
       Object.entries(conversion.by_cv_version||{}).map(function(row){
