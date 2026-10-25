@@ -1328,7 +1328,8 @@ async function refreshApplicationsGmailInBackground(){
   // Runs automatically after loading or refreshing My Applications.
   // A short in-tab debounce avoids duplicate requests from rapid navigation.
   if(applicationGmailRefreshPromise ||
-     Date.now()-lastApplicationGmailRefreshAt<45000 ||
+     (Date.now()-lastApplicationGmailRefreshAt<15000 && lastApplicationGmailRefreshResult &&
+      !lastApplicationGmailRefreshResult.startsWith('Gmail check unavailable')) ||
      !localStorage.getItem('jobintel_token'))return;
   lastApplicationGmailRefreshAt=Date.now();
   applicationGmailRefreshPromise=(async function(){
@@ -1387,7 +1388,8 @@ async function renderApplicationsPage(){
   page.innerHTML = '<div class="pageToolbar card"><div><b>' + apps.length + (showRejectedApplications?' tracked applications':' active applications') + '</b><small>'+rejected.length+' rejected application(s) retained for history and analytics.</small><small id="gmailAutoRefreshStatus" role="status">'+esc(lastApplicationGmailRefreshResult||'Gmail checks automatically when this page opens')+'</small></div><div><button id="toggleRejectedApps" class="secondary">'+(showRejectedApplications?'Hide rejected':'Show rejected ('+rejected.length+')')+'</button> <button id="pageAddApp" class="primary">＋ Add application</button></div></div>' +
     banner +
     '<div class="card tableCard"><table class="dataTable"><thead><tr><th>Role</th><th>Company</th><th>Applied</th><th>Match</th><th>Status</th><th>Gmail signal</th><th>Link</th></tr></thead><tbody>' +
-    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b></td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td>'+(a.status==='Rejected'?'<button type="button" class="gmailRejectedStatus reviewRejection" data-app-id="'+esc(a.id)+'" title="View employer rejection reason and next steps">Rejected ↗</button>':'<select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select>')+'</td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'—')+'</td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
+    apps.map(function(a){const e=latestEventByApp[a.id]; return '<tr><td><b>'+esc(a.role)+'</b></td><td>'+esc(a.company)+'</td><td>'+esc(a.applied_date)+'</td><td>'+Math.round(a.match_score||0)+'%</td><td>'+(a.status==='Rejected'?'<button type="button" class="gmailRejectedStatus reviewRejection" data-app-id="'+esc(a.id)+'" title="View employer rejection reason and next steps">Rejected ↗</button>':'<select class="statusSelect" data-id="'+a.id+'">'+['Saved','Applied','Screening','Interview','Final','Offer','Rejected'].map(function(s){return '<option '+(s===a.status?'selected':'')+'>'+s+'</option>';}).join('')+'</select>')+'</td><td>'+(e?'<span class="pill '+(e.outcome==='Rejected'?'warn':'good')+'">'+esc(e.outcome)+'</span><small>'+esc(e.subject||'')+'</small>':'No Gmail signal')+
+    '<button type="button" class="secondary checkSingleGmail" data-app-id="'+a.id+'">Check Gmail</button></td><td>'+(a.url?'<a target="_blank" rel="noopener" href="'+esc(a.url)+'">Open ↗</a>':'—')+'</td></tr>';}).join('') +
     '</tbody></table></div><section id="rejectionReviewResult" class="card rejectionReviewPanel hidden" aria-live="polite"></section>';
   async function reviewRejection(id){
     const box=document.querySelector('#rejectionReviewResult');
@@ -1425,6 +1427,30 @@ async function renderApplicationsPage(){
       box.innerHTML='<h3>Rejection review unavailable</h3><p>'+esc(err.message)+'</p>';
     }
   }
+  document.querySelectorAll('.checkSingleGmail').forEach(function(button){
+    button.onclick=async function(){
+      button.disabled=true;
+      const old=button.textContent;
+      button.textContent='Checking…';
+      const label=document.querySelector('#gmailAutoRefreshStatus');
+      if(label)label.textContent='Checking this application against connected Gmail…';
+      try{
+        const result=await apiFetch('/api/applications/'+encodeURIComponent(button.dataset.appId)+
+          '/sync-gmail-status',{method:'POST'});
+        lastApplicationGmailRefreshResult=result.updated
+          ? 'Gmail updated '+result.updated+' application status(es).'
+          : 'No matched new outcome found for this application. Verify your Gmail connection and email.';
+        lastApplicationGmailRefreshAt=Date.now();
+        await renderApplicationsPage();
+      }catch(err){
+        lastApplicationGmailRefreshResult='Gmail check unavailable: '+err.message+
+          ' You can update the status manually using the employer email.';
+        if(label)label.textContent=lastApplicationGmailRefreshResult;
+        button.disabled=false;
+        button.textContent=old;
+      }
+    };
+  });
   document.querySelectorAll('.reviewRejection').forEach(function(button){
     button.onclick=function(){reviewRejection(Number(button.dataset.appId));};
   });
