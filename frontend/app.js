@@ -99,7 +99,9 @@ async function renderDashboardData() {
   lastDashboardCheck=Date.now();
   const statusLine=document.querySelector('#dashboardRefreshStatus');
   if(statusLine && currentRoute==='dashboard'){
-    statusLine.textContent='Dashboard checked '+new Date(lastDashboardCheck).toLocaleTimeString()+' · Auto-refresh every 45 seconds while this tab is active. Job feeds require separate manual refresh.';
+    statusLine.textContent='Dashboard checked '+new Date(lastDashboardCheck).toLocaleTimeString()+
+      ' · Auto-refresh every 45 seconds while this tab is active. Job feeds require separate manual refresh.'+
+      (lastApplicationGmailRefreshResult?' · '+lastApplicationGmailRefreshResult:' · Gmail sync runs separately.');
   }
   const s = d.summary;
 
@@ -1337,7 +1339,7 @@ async function refreshApplicationsGmailInBackground(force=false){
   if(applicationGmailRefreshPromise)return applicationGmailRefreshPromise;
   if(!localStorage.getItem('jobintel_token') || (document.hidden && !force))return;
   const minimumInterval=lastApplicationGmailRefreshResult &&
-      lastApplicationGmailRefreshResult.startsWith('Gmail check unavailable') ? 30000 : 60000;
+      lastApplicationGmailRefreshResult.startsWith('Gmail check unavailable') ? 120000 : 60000;
   if(!force && Date.now()-lastApplicationGmailRefreshAt<minimumInterval)return;
   lastApplicationGmailRefreshAt=Date.now();
   applicationGmailRefreshPromise=(async function(){
@@ -1351,7 +1353,8 @@ async function refreshApplicationsGmailInBackground(force=false){
       const result=await apiFetch('/api/gmail/sync-applications',{method:'POST'});
       const checkedTime=new Date().toLocaleTimeString();
       lastApplicationGmailRefreshResult='Gmail checked at '+checkedTime+' · '+
-        (result.updated||0)+' status update(s) · '+(result.matched||0)+' matched email(s)';
+        (result.updated||0)+' status update(s) · '+(result.matched||0)+' matched email(s)'+
+        (result.employers_skipped?' · '+result.employers_skipped+' employers not checked; review manually':'');
       observedGmailSyncTime=result.last_synced_at||observedGmailSyncTime;
       if(currentRoute==='applications')await renderApplicationsPage();
       else if(currentRoute==='dashboard' && result.updated)await load();
