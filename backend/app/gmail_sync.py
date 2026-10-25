@@ -538,12 +538,10 @@ def _sync_gmail_impl(
             # Use the distinctive core of the role, excluding bracketed
             # duration. Gmail commonly ignores some punctuation in phrases.
             role_title = re.sub(r"\\([^)]*\\)", " ", app.role)
-            role_words = re.findall(r"[A-Za-z]{3,}", role_title)
-            role_words = [w for w in role_words if w.lower() not in
-                          {"data", "software", "engineer", "working", "student"}]
-            # Keep engineer when the remaining title would be too short.
-            if len(role_words) < 2:
-                role_words = re.findall(r"[A-Za-z]{3,}", role_title)
+            role_words = re.findall(r"[A-Za-z]{2,}", role_title)
+            if len(role_words) >= 4 and role_words[0].lower() == "data":
+                role_words = role_words[1:]  # "AI Engineer Intern" is distinctive
+
             phrase = " ".join(role_words[:4])
             if len(phrase) >= 10:
                 role_query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{phrase}"'
