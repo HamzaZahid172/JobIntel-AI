@@ -522,7 +522,7 @@ def _sync_gmail_impl(
         # a distinctive role title, but only use the email if company+role
         # evidence uniquely matches one of the user's applications.
         if len(company) >= 12 and " " not in company and app.role:
-            role_title = re.sub(r"\\([^)]*\\)", " ", app.role)
+            role_title = re.sub(r"\([^)]*\)", " ", app.role)
             role_words = re.findall(r"[A-Za-z]{2,}", role_title)
             if len(role_words) >= 4 and role_words[0].lower() == "data":
                 role_words = role_words[1:]
