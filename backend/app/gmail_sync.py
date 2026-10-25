@@ -199,6 +199,7 @@ _REJECTION_PATTERNS = (
     r"\b(?:we|our team)\s+(?:have\s+)?(?:decided|chosen)\s+not\s+to\s+(?:move\s+forward|proceed|progress)\b",
     r"\b(?:we|our team)\s+(?:will\s+not|won't|cannot|can't)\s+(?:be\s+)?(?:moving\s+forward|proceed(?:ing)?|progress(?:ing)?)\b",
     r"\b(?:we|our team)\s+(?:have\s+)?(?:decided|chosen)\s+to\s+(?:move\s+forward|proceed)\s+with\s+other\s+(?:candidates|applicants)\b",
+    r"\bwe(?:\s+have|\x27ve)\s+made\s+the\s+decision\s+to\s+(?:move\s+forward|proceed)\s+with\s+(?:other\s+)?candidates\b",
     r"\byour\s+application\s+(?:was|has\s+been|is)\s+(?:not\s+successful|unsuccessful|not\s+selected|rejected|declined)\b",
     r"\byou\s+(?:were\s+not|have\s+not\s+been|are\s+not)\s+selected\s+for\s+(?:this|the|our)\s+(?:role|position|job)\b",
     r"\b(?:we|our team)\s+(?:are\s+)?(?:unable|not\s+able)\s+to\s+offer\s+you\s+(?:this|the|a)\s+(?:role|position|job)\b",
@@ -282,7 +283,17 @@ def match_application(
     """Require company evidence and a unique role; never guess between roles."""
     text = _normalise(f"{subject} {sender} {snippet}")
     tokens = _tokens(text)
-    candidates = [app for app in applications if _app_company_match(app, text, tokens)]
+    # Employer names can appear as shifttechnology in a tracker but as
+    # Shift Technology / shift-technology.com in email. Require a sufficiently
+    # long exact compact name, then still require unique role/application evidence.
+    compact = re.sub(r"[^a-z0-9]", "", text)
+    def company_matches(app):
+        if _app_company_match(app, text, tokens):
+            return True
+        name = re.sub(r"[^a-z0-9]", "", (app.company or "").lower())
+        return len(name) >= 8 and name in compact
+
+    candidates = [app for app in applications if company_matches(app)]
     if not candidates:
         return None
 
@@ -497,14 +508,39 @@ def _sync_gmail_impl(
         if len(company_queries) > 12:
             break
         query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{company}"'
-        targeted = httpx.get(
-            f"{GMAIL_API}/users/me/messages",
-            headers=headers,
-            params={"q": query, "maxResults": 30, "includeSpamTrash": True},
-            timeout=20,
-        )
-        targeted.raise_for_status()
-        for item in targeted.json().get("messages", []):
+        def search_messages(search_query: str) -> list[dict]:
+            response = httpx.get(
+                f"{GMAIL_API}/users/me/messages",
+                headers=headers,
+                params={"q": search_query, "maxResults": 30, "includeSpamTrash": True},
+                timeout=12,
+            )
+            # Refresh expired Google tokens for targeted searches too, not only
+            # the general inbox scan. Do not retry repeatedly on 403/429.
+            if response.status_code == 401 and connection.refresh_token:
+                _refresh_access_token(connection)
+                db.commit()
+                headers["Authorization"] = f"Bearer {connection.access_token}"
+                response = httpx.get(
+                    f"{GMAIL_API}/users/me/messages",
+                    headers=headers,
+                    params={"q": search_query, "maxResults": 30, "includeSpamTrash": True},
+                    timeout=12,
+                )
+            response.raise_for_status()
+            return response.json().get("messages", [])
+
+        listed = search_messages(query)
+        # A company saved as "shifttechnology" may be written as "Shift
+        # Technology" in the message. Fall back to a distinctive role phrase
+        # if the exact company query returns no results.
+        if not listed and app.role:
+            role_words = re.sub(r"[^a-zA-Z0-9 ]", " ", app.role)
+            role_words = " ".join(role_words.split())
+            if len(role_words) >= 12:
+                role_query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{role_words}"'
+                listed = search_messages(role_query)
+        for item in listed:
             message_id = item.get("id")
             if message_id and message_id not in seen_ids and targeted_listed < 150:
                 seen_ids.add(message_id)
