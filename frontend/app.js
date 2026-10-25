@@ -555,6 +555,9 @@ async function routeTo(route, updateHash=true){
   if(route==='dashboard'){
     dash.classList.remove('hidden'); page.classList.add('hidden');
     await load();
+    // Refresh Gmail independently of the dashboard API so rendering stays fast.
+    // A successful sync updates the dashboard from the actual saved statuses.
+    refreshApplicationsGmailInBackground().catch(function(){});
     return;
   }
   dash.classList.add('hidden'); page.classList.remove('hidden');
@@ -1345,8 +1348,14 @@ async function refreshApplicationsGmailInBackground(){
       lastApplicationGmailRefreshResult='Gmail checked · '+result.updated+' status update(s)';
       observedGmailSyncTime=result.last_synced_at||observedGmailSyncTime;
       if(currentRoute==='applications')await renderApplicationsPage();
+      else if(currentRoute==='dashboard' && result.updated)await load();
     }catch(err){
       lastApplicationGmailRefreshResult='Gmail check unavailable: '+err.message;
+      if(currentRoute==='dashboard'){
+        const line=document.querySelector('#dashboardRefreshStatus');
+        if(line)line.textContent=lastApplicationGmailRefreshResult+
+          ' Open Settings to reconnect Gmail, or update the application status manually.';
+      }
     }finally{
       const label=document.querySelector('#gmailAutoRefreshStatus');
       if(label && currentRoute==='applications')label.textContent=lastApplicationGmailRefreshResult||'';
