@@ -748,6 +748,25 @@ def gmail_callback(
     )
 
 
+def gmail_sync_failure(exc: httpx.HTTPError) -> HTTPException:
+    """Give actionable, privacy-safe OAuth failures instead of a generic 502."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        code = exc.response.status_code
+        if code in (401, 403):
+            return HTTPException(
+                409,
+                "Gmail access was denied or expired. In Settings, reconnect Gmail "
+                "with read-only permission, then retry the check.",
+            )
+        if code == 429:
+            return HTTPException(
+                503, "Gmail rate limit reached. Try the check again shortly."
+            )
+    return HTTPException(
+        502, "Gmail could not be reached. Check your network and Gmail connection in Settings."
+    )
+
+
 @app.post("/api/gmail/sync")
 def gmail_sync_now(
     user: User = Depends(get_current_user),
@@ -759,7 +778,7 @@ def gmail_sync_now(
         raise HTTPException(400, str(exc)) from exc
     except httpx.HTTPError as exc:
         logger.exception("Gmail sync failed.")
-        raise HTTPException(502, "Gmail could not be reached. Try reconnecting if this persists.") from exc
+        raise gmail_sync_failure(exc) from exc
 
 
 @app.post("/api/gmail/sync-applications")
@@ -774,7 +793,7 @@ def gmail_sync_applications(
         raise HTTPException(400, str(exc)) from exc
     except httpx.HTTPError as exc:
         logger.exception("Gmail application refresh failed for user %s", user.id)
-        raise HTTPException(502, "Gmail could not be reached. Verify your Gmail connection.") from exc
+        raise gmail_sync_failure(exc) from exc
 
 
 @app.post("/api/applications/{application_id}/sync-gmail-status")
@@ -795,7 +814,7 @@ def sync_application_status_now(
         raise HTTPException(400, str(exc)) from exc
     except (httpx.HTTPError, ValueError) as exc:
         logger.exception("Application-specific Gmail check failed for user %s", user.id)
-        raise HTTPException(502, "Gmail check failed. Check Gmail connection and backend logs.") from exc
+        raise gmail_sync_failure(exc) from exc
     db.refresh(app_item)
     return {
         **result,
