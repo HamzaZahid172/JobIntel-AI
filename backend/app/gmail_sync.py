@@ -493,60 +493,70 @@ def _sync_gmail_impl(
             seen_ids.add(signal.gmail_message_id)
             message_ids.append(signal.gmail_message_id)
 
-    # High-priority employer search: recent application outcomes must not be
-    # buried behind a 300-message general inbox limit.
+    # Batch employer terms into a handful of Gmail OR searches instead of
+    # making one blocking API call per tracked application. Matching the
+    # message back to an application remains separate and conservative.
     targeted_listed = 0
     recent_cutoff = datetime.utcnow().date() - timedelta(days=60)
-    company_queries: set[str] = set()
-    for app in target_applications:
-        if only_app_id is None and (app.status in {"Rejected", "Offer"} or (app.applied_date and app.applied_date < recent_cutoff)):
-            continue
+    company_names: set[str] = set()
+    search_terms: list[str] = []
+    eligible_applications = [
+        app for app in target_applications
+        if only_app_id is not None or (
+            app.status not in {"Rejected", "Offer"} and
+            (not app.applied_date or app.applied_date >= recent_cutoff)
+        )
+    ]
+    targets_skipped = 0
+    for app in eligible_applications:
         company = re.sub(r"[^a-zA-Z0-9 äöüÄÖÜß&.-]", "", app.company or "").strip()
-        if len(company) < 3 or company.casefold() in company_queries:
+        if len(company) < 3 or company.casefold() in company_names:
             continue
-        company_queries.add(company.casefold())
-        if len(company_queries) > 12:
-            break
-        query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{company}"'
-        def search_messages(search_query: str) -> list[dict]:
-            response = httpx.get(
-                f"{GMAIL_API}/users/me/messages",
-                headers=headers,
-                params={"q": search_query, "maxResults": 30, "includeSpamTrash": True},
-                timeout=12,
-            )
-            # Refresh expired Google tokens for targeted searches too, not only
-            # the general inbox scan. Do not retry repeatedly on 403/429.
-            if response.status_code == 401 and connection.refresh_token:
-                _refresh_access_token(connection)
-                db.commit()
-                headers["Authorization"] = f"Bearer {connection.access_token}"
-                response = httpx.get(
-                    f"{GMAIL_API}/users/me/messages",
-                    headers=headers,
-                    params={"q": search_query, "maxResults": 30, "includeSpamTrash": True},
-                    timeout=12,
-                )
-            response.raise_for_status()
-            return response.json().get("messages", [])
-
-        listed = search_messages(query)
-        # A company saved as "shifttechnology" may be written as "Shift
-        # Technology" in the message. Fall back to a distinctive role phrase
-        # if the exact company query returns no results.
-        if not listed and app.role:
-            # Use the distinctive core of the role, excluding bracketed
-            # duration. Gmail commonly ignores some punctuation in phrases.
-            role_title = re.sub(r"\([^)]*\)", " ", app.role)
+        if len(company_names) >= 36:
+            targets_skipped += 1
+            continue
+        company_names.add(company.casefold())
+        search_terms.append(f'"{company}"')
+        # Employer tracking sometimes stores concatenated names such as
+        # shifttechnology, while Gmail indexes Shift Technology. Also search
+        # a distinctive role title, but only use the email if company+role
+        # evidence uniquely matches one of the user's applications.
+        if len(company) >= 12 and " " not in company and app.role:
+            role_title = re.sub(r"\\([^)]*\\)", " ", app.role)
             role_words = re.findall(r"[A-Za-z]{2,}", role_title)
             if len(role_words) >= 4 and role_words[0].lower() == "data":
-                role_words = role_words[1:]  # "AI Engineer Intern" is distinctive
-
+                role_words = role_words[1:]
             phrase = " ".join(role_words[:4])
             if len(phrase) >= 10:
-                role_query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{phrase}"'
-                listed = search_messages(role_query)
-        for item in listed:
+                search_terms.append(f'"{phrase}"')
+
+    def search_messages(query: str) -> list[dict]:
+        params = {"q": query, "maxResults": 60, "includeSpamTrash": True}
+        response = httpx.get(
+            f"{GMAIL_API}/users/me/messages", headers=headers,
+            params=params, timeout=12,
+        )
+        if response.status_code == 401 and connection.refresh_token:
+            _refresh_access_token(connection)
+            db.commit()
+            headers["Authorization"] = f"Bearer {connection.access_token}"
+            response = httpx.get(
+                f"{GMAIL_API}/users/me/messages", headers=headers,
+                params=params, timeout=12,
+            )
+        response.raise_for_status()
+        return response.json().get("messages", [])
+
+    # Gmail braces represent OR terms, keeping requests bounded. For a
+    # single employer use the simple quoted query for compatibility.
+    search_batches = [
+        search_terms[index:index + 4]
+        for index in range(0, len(search_terms), 4)
+    ]
+    for terms in search_batches:
+        expression = terms[0] if len(terms) == 1 else "{ " + " ".join(terms) + " }"
+        query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d {expression}'
+        for item in search_messages(query):
             message_id = item.get("id")
             if message_id and message_id not in seen_ids and targeted_listed < 150:
                 seen_ids.add(message_id)
@@ -750,6 +760,8 @@ def _sync_gmail_impl(
         "scanned": scanned,
         "listed": len(message_ids),
         "targeted_listed": targeted_listed,
+        "employers_searched": len(company_names),
+        "employers_skipped": targets_skipped,
         "classified": classified_messages,
         "unmatched": unmatched_messages,
         "already_processed": previously_processed,
