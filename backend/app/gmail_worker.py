@@ -10,7 +10,7 @@ import threading
 from datetime import datetime, timedelta
 
 from .db import SessionLocal
-from .gmail_sync import sync_gmail
+from .gmail_sync import sync_active_applications_gmail
 from .models import GmailConnection
 
 logger = logging.getLogger("jobintel.gmail_worker")
@@ -29,11 +29,10 @@ def sync_due_connections(now: datetime | None = None, interval_seconds: int = _D
             if connection.last_synced_at and now - connection.last_synced_at < timedelta(seconds=interval_seconds):
                 continue
             try:
-                # First connection catches prior mail; routine sync focuses on
-                # recent mail and processes up to 100 message IDs (cached events
-                # are skipped).
-                days = 45 if connection.last_synced_at is None else 7
-                sync_gmail(db, connection.user_id, days=days, max_results=100)
+                # Targeted batched employer searches are significantly cheaper
+                # than rescanning the user's whole inbox every two minutes.
+                # Manual full-inbox sync remains available on demand.
+                sync_active_applications_gmail(db, connection.user_id)
                 attempted += 1
             except Exception:
                 db.rollback()
