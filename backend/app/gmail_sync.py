@@ -535,10 +535,18 @@ def _sync_gmail_impl(
         # Technology" in the message. Fall back to a distinctive role phrase
         # if the exact company query returns no results.
         if not listed and app.role:
-            role_words = re.sub(r"[^a-zA-Z0-9 ]", " ", app.role)
-            role_words = " ".join(role_words.split())
-            if len(role_words) >= 12:
-                role_query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{role_words}"'
+            # Use the distinctive core of the role, excluding bracketed
+            # duration. Gmail commonly ignores some punctuation in phrases.
+            role_title = re.sub(r"\\([^)]*\\)", " ", app.role)
+            role_words = re.findall(r"[A-Za-z]{3,}", role_title)
+            role_words = [w for w in role_words if w.lower() not in
+                          {"data", "software", "engineer", "working", "student"}]
+            # Keep engineer when the remaining title would be too short.
+            if len(role_words) < 2:
+                role_words = re.findall(r"[A-Za-z]{3,}", role_title)
+            phrase = " ".join(role_words[:4])
+            if len(phrase) >= 10:
+                role_query = f'in:anywhere -in:spam newer_than:{max(days, 1)}d "{phrase}"'
                 listed = search_messages(role_query)
         for item in listed:
             message_id = item.get("id")
