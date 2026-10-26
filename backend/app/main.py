@@ -650,6 +650,66 @@ def gmail_status(
     }
 
 
+@app.get("/api/gmail/diagnostics")
+def gmail_diagnostics(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Check actual mailbox access without reading messages or exposing tokens."""
+    connection = db.query(GmailConnection).filter(
+        GmailConnection.user_id == user.id
+    ).first()
+    def result(code: str, message: str, next_step: str, reachable: bool = False):
+        return {
+            "code": code, "message": message, "next_step": next_step,
+            "connected_in_database": bool(connection),
+            "mailbox_reachable": reachable,
+            "last_synced_at": (connection.last_synced_at.isoformat()
+                               if connection and connection.last_synced_at else None),
+        }
+    if not gmail_configured():
+        return result("OAUTH_NOT_CONFIGURED", "Google OAuth credentials are missing.",
+                      "Check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env, then recreate backend.")
+    if not connection:
+        return result("NOT_CONNECTED", "No Gmail account is linked.",
+                      "Open Settings and connect Gmail with read-only permission.")
+    if "https://www.googleapis.com/auth/gmail.readonly" not in (connection.scope or "").split():
+        return result("MISSING_READ_SCOPE", "Gmail read-only scope was not granted.",
+                      "Reconnect Gmail and grant read-only mailbox access.")
+    try:
+        token = ensure_access_token(db, connection)
+        profile = gmail_profile(token)
+        actual = (profile.get("emailAddress") or "").casefold()
+        saved = (connection.google_email or "").casefold()
+        if saved and actual and saved != actual:
+            return result("ACCOUNT_MISMATCH", "The authorized Gmail account is different from the saved account.",
+                          "Disconnect and reconnect the correct Gmail account.")
+        return result("CONNECTED", "Gmail API is reachable and read-only authorization works.",
+                      "Return to My Applications; sync can run automatically.", True)
+    except RuntimeError:
+        return result("TOKEN_MISSING", "Gmail authorization cannot be refreshed.",
+                      "Reconnect Gmail through Settings.")
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (400, 401):
+            return result("TOKEN_REJECTED", "Google rejected the saved authorization.",
+                          "Reconnect Gmail. If the app is in Google OAuth Testing mode, check test-user status.")
+        if code == 403:
+            return result("GMAIL_FORBIDDEN", "Google denied Gmail API access.",
+                          "Confirm Gmail API is enabled, account permission and read-only scope, then reconnect.")
+        if code == 429:
+            return result("GOOGLE_RATE_LIMIT", "Google is rate limiting Gmail requests.",
+                          "Avoid repeated manual syncing and retry later.")
+        return result("GOOGLE_API_ERROR", f"Google Gmail API returned HTTP {code}.",
+                      "Check Gmail API availability and backend logs.")
+    except httpx.TimeoutException:
+        return result("NETWORK_TIMEOUT", "Connection to Google timed out.",
+                      "Check Mac/Docker networking, VPN, proxy and DNS.")
+    except httpx.RequestError:
+        return result("NETWORK_UNAVAILABLE", "Docker cannot connect to the Gmail API.",
+                      "Test DNS and HTTPS access from the backend container; check proxy/VPN/firewall.")
+
+
 @app.post("/api/gmail/connect")
 def gmail_connect(
     user: User = Depends(get_current_user),
@@ -762,6 +822,10 @@ def gmail_sync_failure(exc: httpx.HTTPError) -> HTTPException:
             return HTTPException(
                 503, "Gmail rate limit reached. Try the check again shortly."
             )
+    if isinstance(exc, httpx.TimeoutException):
+        return HTTPException(504, "Google Gmail API request timed out. Open Settings > Test Gmail connection.")
+    if isinstance(exc, httpx.ConnectError):
+        return HTTPException(502, "Backend Docker container cannot reach Google. Open Settings > Test Gmail connection.")
     return HTTPException(
         502, "Gmail could not be reached. Check your network and Gmail connection in Settings."
     )

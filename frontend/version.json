@@ -1,0 +1,6 @@
+{
+  "build": "2026.10.26.1",
+  "feature": "single-sync-all",
+  "released": "2026-10-26",
+  "note": "If Check Gmail buttons still appear per row, the browser is serving an outdated UI."
+}
