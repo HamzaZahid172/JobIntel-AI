@@ -216,3 +216,5 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 .googleSignInButton span{font-size:18px;color:#386ecf;font-weight:800}
 .authProviderNote{display:block;text-align:center;font-size:11px;color:#6b7d94;margin:10px 0}
 .googleSignInSettings small{display:block;margin-top:9px;color:#667b96}
+
+.jobintelBuild{position:absolute;bottom:18px;left:20px;right:12px;color:#667b99;font-size:11px;overflow-wrap:anywhere}
