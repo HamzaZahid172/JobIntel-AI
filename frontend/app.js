@@ -1,4 +1,5 @@
 const API = localStorage.getItem('jobintel_api') || 'http://localhost:8100';
+const JOBINTEL_UI_BUILD = '2026.10.26.1';
 
 const navItems = [
   {route:'dashboard', label:'⌂ Dashboard'},
@@ -1758,10 +1759,11 @@ async function renderSettingsPage(){
         '<h2>Gmail permissions &amp; application tracking</h2>' +
         '<p>This is the Gmail permission area for your Google connection, not a second JobIntel login. Reading and sending are authorized separately. JobIntel matches messages with tracked applications.</p>' +
         (gmail.connected
-          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button>'+(gmail.can_send?'<span class="pill good">Send authorized</span>':'<button id="gmailSendPermissionButton" class="secondary" type="button">Enable Gmail sending</button>')+'<button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
+          ? '<p><span class="pill good">Connected</span> '+esc(gmail.google_email||'Gmail')+'</p><p class="muted">Last sync: '+esc(gmail.last_synced_at||'Not synced yet')+'</p><div class="prepActions"><button id="gmailSyncButton" class="primary" type="button">Sync Gmail now</button><button id="gmailDiagnosticsButton" class="secondary" type="button">Test Gmail connection</button>'+(gmail.can_send?'<span class="pill good">Send authorized</span>':'<button id="gmailSendPermissionButton" class="secondary" type="button">Enable Gmail sending</button>')+'<button id="gmailDisconnectButton" class="secondary" type="button">Disconnect</button></div>'
           : (gmail.configured
-              ? '<p><span class="pill warn">Not connected</span></p><button id="gmailConnectButton" class="primary" type="button">Connect Gmail</button>'
+              ? '<p><span class="pill warn">Not connected</span></p><button id="gmailConnectButton" class="primary" type="button">Connect Gmail</button><button id="gmailDiagnosticsButton" class="secondary" type="button">Test Gmail connection</button>'
               : '<p><span class="pill warn">OAuth setup required</span></p><p class="muted">Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_GMAIL_REDIRECT_URI in your .env, then rebuild the backend.</p>')) +
+        '<p id="gmailDiagnosticResult" class="muted" role="status" aria-live="polite">Test the actual Gmail connection here if automatic status updates fail.</p>' +
         '<p class="policyNote">'+(gmail.can_send?'Gmail read and send enabled. Sending is never automatic: you review each recipient and message before clicking Send.':'Gmail read-only is active. For sending, add gmail.send to Google Cloud Data Access and click Enable Gmail sending to authorize it separately.')+'</p>' +
       '</div>' +
       '<div class="card detailPage atsTargets">' +
@@ -1855,6 +1857,21 @@ async function renderSettingsPage(){
   if(document.querySelector('#gmailSendPermissionButton')){
     document.querySelector('#gmailSendPermissionButton').onclick=async function(){
       await startGmailSendAuthorization();
+    };
+  }
+  if(document.querySelector('#gmailDiagnosticsButton')){
+    document.querySelector('#gmailDiagnosticsButton').onclick=async function(){
+      const button=document.querySelector('#gmailDiagnosticsButton');
+      const output=document.querySelector('#gmailDiagnosticResult');
+      button.disabled=true;
+      if(output)output.textContent='Testing Google authorization and Gmail API connectivity…';
+      try{
+        const result=await apiFetch('/api/gmail/diagnostics');
+        if(output)output.textContent=result.code+': '+result.message+' '+result.next_step+
+          (result.last_synced_at?' Last successful sync: '+result.last_synced_at:'');
+      }catch(err){
+        if(output)output.textContent='Connection test failed: '+err.message;
+      }finally{button.disabled=false;}
     };
   }
   if(document.querySelector('#gmailSyncButton')){
