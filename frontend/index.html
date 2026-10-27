@@ -185,10 +185,15 @@ npm start</pre><p>Keep the assistant running on localhost:3401 while JobIntel is
 <div id="tailorModal" class="modal hidden">
   <div class="modalCard tailorModalCard">
     <div class="panelHead"><h3>Evidence-based CV Tailoring</h3><button type="button" id="closeTailorModal" class="iconBtn">✕</button></div>
-    <p>Choose one of your uploaded CVs. This creates a truthful draft for your review; it does not rewrite or submit your CV automatically.</p>
+    <p>Choose a CV and review the results. Check the extracted text, dates and claims before using a draft.</p>
     <label>CV version<select id="tailorVersion"></select></label>
     <label>Suggestions and original CV evidence<textarea id="tailorDraft" rows="14" readonly></textarea></label>
-    <div class="prepActions"><button type="button" id="copyTailorDraft" class="secondary">Copy suggestions</button><button type="button" id="prepareWithSelectedCv" class="primary">Prepare application with this CV</button></div>
+    <div id="tailorEditablePanel" class="hidden">
+      <label>Editable CV draft<textarea id="tailorEditable" rows="18"></textarea></label>
+      <small>Highlights are selected from the original CV. A keyword mention does not prove proficiency. PDF extraction can disturb formatting; check every line. Your edits are not automatically fact-checked. The downloaded file is not automatically attached to applications.</small>
+      <button type="button" id="downloadTailoredCv" class="secondary">Download editable Word CV</button>
+    </div>
+    <div class="prepActions"><button type="button" id="copyTailorDraft" class="secondary">Copy suggestions</button><button type="button" id="prepareWithSelectedCv" class="primary">Prepare with original selected CV</button></div>
   </div>
 </div>
 

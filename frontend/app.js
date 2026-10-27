@@ -1236,6 +1236,7 @@ async function showPreApplyCheck(jobId){
   const modal=document.querySelector('#tailorModal');
   const versionSelect=document.querySelector('#tailorVersion');
   const output=document.querySelector('#tailorDraft');
+  document.querySelector('#tailorEditablePanel').classList.add('hidden');
   modal.classList.remove('hidden');
   modal.querySelector('h3').textContent='Application Quality Review';
   document.querySelector('#prepareWithSelectedCv').classList.add('hidden');
@@ -1272,6 +1273,7 @@ async function showAtsReview(jobId){
   const modal=document.querySelector('#tailorModal');
   const versionSelect=document.querySelector('#tailorVersion');
   const output=document.querySelector('#tailorDraft');
+  document.querySelector('#tailorEditablePanel').classList.add('hidden');
   modal.classList.remove('hidden');
   modal.querySelector('h3').textContent='Job-specific ATS Simulation';
   output.value='Evaluating CV against job requirements...';
@@ -1310,6 +1312,12 @@ async function showTailorCv(jobId){
     modal.classList.add('hidden');
   };
   const draftArea=document.querySelector('#tailorDraft');
+  const editable=document.querySelector('#tailorEditable');
+  const panel=document.querySelector('#tailorEditablePanel');
+  const download=document.querySelector('#downloadTailoredCv');
+  panel.classList.remove('hidden');
+  editable.value='';
+  download.disabled=true;
   modal.classList.remove('hidden');
   draftArea.value='Loading CV evidence…';
   try{
@@ -1319,16 +1327,49 @@ async function showTailorCv(jobId){
       return '<option value="'+v.id+'">'+esc(v.filename)+' · '+Math.round(v.ats_score)+' ATS readiness</option>';
     }).join('');
     chooseRoleCvOption(versions,jobId,versionSelect);
+    let selectedVersion=versionSelect.value;
+    let originalDraft='';
     async function refresh(){
-      const data=await apiFetch('/api/jobs/'+jobId+'/tailor-cv?cv_id='+versionSelect.value);
-      const d=data.draft;
-      draftArea.value='SUGGESTED PROFILE SUMMARY\n'+d.suggested_summary+
-        '\n\nORIGINAL CV EVIDENCE (review before using)\n'+(d.cv_evidence||[]).map(function(x){return '• '+x;}).join('\n')+
-        '\n\nMATCHED REQUIREMENTS\n'+(d.matched_skills||[]).join(', ')+
-        '\n\nMISSING - DO NOT CLAIM\n'+(d.missing_skills_do_not_claim||[]).join(', ')+
-        '\n\n'+d.instructions;
+      download.disabled=true;
+      versionSelect.disabled=true;
+      try{
+        const data=await apiFetch('/api/jobs/'+jobId+'/tailor-cv?cv_id='+versionSelect.value);
+        const d=data.draft;
+        editable.value=d.tailored_cv_text || '';
+        originalDraft=editable.value;
+        selectedVersion=versionSelect.value;
+        download.disabled=!editable.value;
+        draftArea.value='SUGGESTED PROFILE SUMMARY\n'+d.suggested_summary+
+          '\n\nORIGINAL CV EVIDENCE (review before using)\n'+(d.cv_evidence||[]).map(function(x){return '• '+x;}).join('\n')+
+          '\n\nMATCHED REQUIREMENTS\n'+(d.matched_skills||[]).join(', ')+
+          '\n\nMISSING - DO NOT CLAIM\n'+(d.missing_skills_do_not_claim||[]).join(', ')+
+          '\n\n'+d.instructions;
+      }finally{versionSelect.disabled=false;}
     }
-    versionSelect.onchange=refresh;
+    versionSelect.onchange=async function(){
+      if(editable.value!==originalDraft && !confirm('Changing the CV version will replace your unsaved edits. Continue?')){
+        versionSelect.value=selectedVersion;
+        return;
+      }
+      try{await refresh();}catch(err){draftArea.value='CV tailoring could not load: '+err.message;download.disabled=true;}
+    };
+    download.onclick=async function(){
+      if(!editable.value.trim()){alert('The CV draft is empty.');return;}
+      download.disabled=true;
+      try{
+        const data=await apiFetch('/api/jobs/'+jobId+'/tailor-cv/docx',{
+          method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({cv_id:Number(versionSelect.value),text:editable.value})
+        });
+        const binary=atob(data.content_base64 || '');
+        if(!binary)throw new Error('The generated document was empty.');
+        const bytes=Uint8Array.from(binary,function(ch){return ch.charCodeAt(0);});
+        const url=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}));
+        const link=document.createElement('a');link.href=url;link.download=data.filename || 'Tailored_CV.docx';
+        document.body.appendChild(link);link.click();link.remove();URL.revokeObjectURL(url);
+      }catch(err){alert('CV download failed: '+err.message);}
+      finally{download.disabled=false;}
+    };
     await refresh();
   }catch(err){draftArea.value='CV tailoring could not load: '+err.message;}
 }
