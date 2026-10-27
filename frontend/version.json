@@ -1,6 +1,6 @@
 {
-  "build": "2026.10.26.1",
-  "feature": "single-sync-all",
-  "released": "2026-10-26",
-  "note": "If Check Gmail buttons still appear per row, the browser is serving an outdated UI."
+  "build": "2026.10.27.1",
+  "feature": "job-specific-cv-drafts",
+  "released": "2026-10-27",
+  "note": "If CV Drafts is missing from the build label, the browser is serving an older UI."
 }

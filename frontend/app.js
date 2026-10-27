@@ -1,5 +1,5 @@
 const API = localStorage.getItem('jobintel_api') || 'http://localhost:8100';
-const JOBINTEL_UI_BUILD = '2026.10.26.1';
+const JOBINTEL_UI_BUILD = '2026.10.27.1';
 
 const navItems = [
   {route:'dashboard', label:'⌂ Dashboard'},
