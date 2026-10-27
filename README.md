@@ -45,6 +45,12 @@ npm start
 
 Open http://localhost:3100 → **Job Market / Action Center → Assisted Apply**. After the employer confirms submission in Chromium, use the tracker to record it. **Do not treat a button click alone as confirmation.**
 
+### Using the Action Center
+
+Each job card keeps **View & apply**, **Tailor CV** and **Assisted apply** in view. Open **More actions & match details** for the cover letter, checks, application package, interview practice and tracking. Search or filter the queue by decision; use **Show more jobs** to display the next results. The queue loads up to 100 of the highest-ranked recommendations, while the summary counts include all recommendations. Already-tracked vacancies remain excluded.
+
+The match score is an estimate, not an interview prediction. Confirm the employer, location and requirements before applying.
+
 - **ATS Review:** Each job has a local job-specific ATS simulation against the selected CV; it checks required-skill evidence and CV parsing but is not a certified ATS approval score.
 - **Gmail Follow-up:** Drafts are editable. Gmail read-only works as before. To enable *sending*, first add `https://www.googleapis.com/auth/gmail.send` in Google Auth Platform → Data Access for your existing OAuth project; then JobIntel Settings → **Enable Gmail sending** and grant consent. Only a manually reviewed follow-up with a verified recipient is sent on an explicit click. If you do not grant permission, copy/manual send still works.
 

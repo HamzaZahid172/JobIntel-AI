@@ -120,6 +120,61 @@ main,#pageContent,.jobMarketGrid,.followupGrid{min-width:0}
 /* Source-grounded contact finding on follow-up cards */
 .followupLookupActions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 4px}
 .followupLookupStatus{font-size:11px;color:#52677f;overflow-wrap:anywhere}
+
+/* Keep the application queue readable without letting controls escape cards. */
+.marketJob{min-width:0;overflow-wrap:anywhere}
+.jobMarketGrid{align-items:start}
+.marketJobTop>div:first-child{min-width:0}
+.jobSkillLabel{display:inline-block;margin-right:6px;font-size:10px;font-weight:700;color:#627891}
+.eligibilityWarning{padding:8px 10px;border:1px solid #f2ddad;border-radius:8px;background:#fff9ed;color:#765b24!important;font-size:11px;line-height:1.45}
+.jobActions{display:flex;flex-direction:row;flex-wrap:wrap;align-items:stretch;gap:8px;margin-top:14px}
+.jobActions>a,.jobActions>button{display:inline-flex;align-items:center;justify-content:center;min-width:0;min-height:40px;max-width:100%;text-align:center;white-space:normal;line-height:1.25;font-size:12px}
+.jobActions .primaryLink:hover{background:#075fcf}
+.jobLinkUnavailable{display:inline-flex;align-items:center;color:#6b7890;font-size:12px}
+.jobMore,.followupMore{margin-top:12px;border-top:1px solid #e9eff6}
+.jobMore summary,.followupMore summary{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 2px;color:#315f92;font-size:12px;font-weight:700;cursor:pointer;list-style:none}
+.jobMore summary::-webkit-details-marker,.followupMore summary::-webkit-details-marker{display:none}
+.jobMore summary::after,.followupMore summary::after{content:'+';font-size:18px;line-height:1;color:#5882ad}
+.jobMore[open] summary::after,.followupMore[open] summary::after{content:'−'}
+.jobMore summary:focus-visible,.followupMore summary:focus-visible{outline:2px solid #0876f9;outline-offset:3px;border-radius:4px}
+.jobMoreContent{padding:0 0 4px}
+.jobSecondaryActions{display:flex;flex-wrap:wrap;gap:7px;margin:0 0 12px}
+.jobSecondaryActions button{min-width:0;max-width:100%;white-space:normal;text-align:left;font-size:12px;line-height:1.3}
+.jobMoreContent .muted,.jobMoreContent .eligibilityLine{font-size:11px;line-height:1.45;overflow-wrap:anywhere}
+.actionSummary{grid-template-columns:repeat(3,minmax(0,1fr))}
+.actionQueueHeader{display:flex;align-items:end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:22px 0 8px}
+.actionQueueHeader h3{margin:0 0 5px}
+.actionQueueHeader p{margin:0;color:#667b99;font-size:12px}
+.actionQueueFilters{display:flex;gap:10px;flex-wrap:wrap;align-items:end;min-width:0}
+.actionQueueFilters label{display:grid;gap:5px;color:#506688;font-size:11px;font-weight:700}
+.actionQueueFilters label:first-child{width:280px;max-width:100%}
+.actionQueueFilters input,.actionQueueFilters select{min-width:0;min-height:40px;border:1px solid #ceddec;border-radius:8px;padding:9px 10px;background:#fff;color:#243c5a;font:inherit;font-size:12px}
+.actionQueueFilters input{width:100%;font-weight:400}
+.actionShowMore{display:block;margin:16px auto 4px}
+.followupIntro{margin-top:28px}
+.followupMore .prepActions{margin-bottom:8px}
+.mobileNav{display:none}
+@media(max-width:720px){
+  .actionSummary{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}
+  .actionSummary .analyticsMini{padding:10px}
+  .actionSummary .analyticsMini small{font-size:10px;line-height:1.2}
+  .actionSummary .analyticsMini b{font-size:20px}
+  .jobActions{flex-direction:row}
+  .jobActions>a,.jobActions>button{flex:1 1 125px}
+  .actionQueueHeader,.actionQueueFilters{align-items:stretch}
+  .actionQueueFilters,.actionQueueFilters label,.actionQueueFilters input,.actionQueueFilters select{width:100%}
+  .actionQueueFilters label:first-child{width:100%}
+  .scoreBadge{width:62px;height:62px;border-width:6px;font-size:16px}
+}
+@media(max-width:760px){
+  header{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+  header>div:first-child{grid-column:1;grid-row:1;min-width:0}
+  .headerIcons{grid-column:2;grid-row:1;align-self:start;margin:0}
+  .mobileNav{display:grid;order:3;width:100%;gap:5px;color:#506688;font-size:11px;font-weight:700}
+  .mobileNav{grid-column:1/-1;grid-row:2}
+  .mobileNav select{width:100%;min-height:40px;padding:9px 10px;border:1px solid #ceddec;border-radius:8px;background:#fff;color:#243c5a;font:inherit;font-size:13px}
+  .headerActions{grid-column:1/-1;grid-row:3;order:4}
+}
 .followupContactResults{display:grid;gap:6px;margin:4px 0 8px;min-width:0}
 .followupContactOption{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px;border:1px solid #d6e6f4;border-radius:9px;background:#f4f9ff}
 .followupContactOption small{flex:1;min-width:min(180px,100%);overflow-wrap:anywhere;line-height:1.5}
