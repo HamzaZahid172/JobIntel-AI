@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 from io import BytesIO
 
 from docx import Document
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pypdf import PdfReader
@@ -1153,6 +1153,7 @@ def submit_interview_practice_answer(
 def action_center(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    limit: int = Query(12, ge=1, le=100),
 ):
     cv = latest_cv(db, user.id)
     applications = (
@@ -1198,7 +1199,7 @@ def action_center(
     )
     return {
         "cv_uploaded": True,
-        "opportunities": assessments[:12],
+        "opportunities": assessments[:limit],
         "followups": due,
         "apply_now": sum(1 for row in assessments if row["opportunity"]["decision"] == "Apply Now"),
         "review": sum(1 for row in assessments if row["opportunity"]["decision"] == "Review"),
