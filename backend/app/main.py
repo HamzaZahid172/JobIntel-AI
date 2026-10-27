@@ -35,6 +35,7 @@ from .job_acquisition import (
 )
 from .ats_collectors import PROVIDER_SOURCE, sync_configured_ats
 from .cover_letter import build_cover_letter_docx, generate_cover_letter_text, safe_filename
+from .tailored_cv import build_tailored_cv_docx, build_tailored_cv_text
 from .document_vault import store_document, read_document, public_document, choose_document
 from .pre_application_review import job_role_family, pre_application_review
 from .auth import (
@@ -95,6 +96,7 @@ from .schemas import (
     ApplicationOut,
     CandidateProfileUpdate,
     CoverLetterDraft,
+    TailoredCVExport,
     GoogleLoginExchange,
     ApprovedFollowupSend,
     ApplicationPackageAnswerUpdate,
@@ -1288,8 +1290,31 @@ def tailor_cv(
     if not cv:
         raise HTTPException(400, "Upload a CV or select one of your own CV versions.")
     report = match_details(cv, job)
+    draft = cv_tailoring_draft(cv.text, job, report)
+    draft["tailored_cv_text"] = build_tailored_cv_text(cv.text, draft)
     return {"cv_id": cv.id, "cv_filename": cv.filename,
-            "match": report, "draft": cv_tailoring_draft(cv.text, job, report)}
+            "match": report, "draft": draft}
+
+
+@app.post("/api/jobs/{job_id}/tailor-cv/docx")
+def export_tailored_cv(
+    job_id: int,
+    payload: TailoredCVExport,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    job = db.get(LiveJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found.")
+    cv, _, _ = resolve_job_cv(db, user.id, job, payload.cv_id)
+    if not cv:
+        raise HTTPException(400, "Select one of your own CV versions.")
+    if not payload.text.strip():
+        raise HTTPException(400, "The CV text is empty.")
+    content = build_tailored_cv_docx(payload.text)
+    filename = safe_filename(f"{user.display_name}_{job.company}_{job.title}_CV") + ".docx"
+    return {"filename": filename,
+            "content_base64": base64.b64encode(content).decode("ascii")}
 
 
 @app.post("/api/applications/{application_id}/follow-up-sent")

@@ -104,6 +104,11 @@ class CoverLetterDraft(BaseModel):
     text: str = Field(min_length=80, max_length=12000)
 
 
+class TailoredCVExport(BaseModel):
+    cv_id: int = Field(gt=0)
+    text: str = Field(min_length=20, max_length=100000)
+
+
 class InterviewAnswer(BaseModel):
     question_index: int = Field(ge=0,le=50)
     answer: str = Field(min_length=20,max_length=6000)
