@@ -1,6 +1,6 @@
 {
-  "build": "2026.10.27.1",
-  "feature": "job-specific-cv-drafts",
+  "build": "2026.10.27.2",
+  "feature": "action-center-layout",
   "released": "2026-10-27",
-  "note": "If CV Drafts is missing from the build label, the browser is serving an older UI."
+  "note": "If the build label is not 2026.10.27.2, the browser is serving an older UI."
 }

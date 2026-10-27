@@ -1,5 +1,5 @@
 const API = localStorage.getItem('jobintel_api') || 'http://localhost:8100';
-const JOBINTEL_UI_BUILD = '2026.10.27.1';
+const JOBINTEL_UI_BUILD = '2026.10.27.2';
 
 const navItems = [
   {route:'dashboard', label:'⌂ Dashboard'},
@@ -37,6 +37,14 @@ function renderNav(){
   document.querySelectorAll('[data-route]').forEach(function(button){
     button.onclick = function(){ routeTo(button.dataset.route); };
   });
+  const mobile = document.querySelector('#mobileNavSelect');
+  if(mobile){
+    mobile.innerHTML=navItems.map(function(item){
+      return '<option value="'+esc(item.route)+'">'+esc(item.label)+'</option>';
+    }).join('');
+    mobile.value=currentRoute;
+    mobile.onchange=function(){routeTo(mobile.value);};
+  }
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -154,6 +162,7 @@ async function renderDashboardData() {
 
   const matchesHtml = d.matches.length ? d.matches.map(m => {
     const score = m.match == null ? '<span class="noScore">Upload CV<br>to score</span>' : ring(Math.round(m.match),'Match');
+    const jobUrl=publicJobUrl(m.url);
     const matched = (m.matched_skills || []).slice(0,4);
     const visibleSkills = matched.length ? matched : (m.skills || []).slice(0,4);
     const skills = visibleSkills.map(x=>`<span class="tag">${esc(x)}</span>`).join('');
@@ -161,10 +170,10 @@ async function renderDashboardData() {
     return `<div class="job">
       <div class="company">${esc(m.company).slice(0,2).toUpperCase()}</div>
       <div class="grow">
-        <a class="jobTitle" href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.title)}</a>
+        ${jobUrl ? `<a class="jobTitle" href="${esc(jobUrl)}" target="_blank" rel="noopener noreferrer">${esc(m.title)}</a>` : `<span class="jobTitle">${esc(m.title)}</span>`}
         <small>${esc(m.company)} · ${esc(m.location)}</small>
         <div>${skills}${roles}<span class="sourceTag">${esc(m.source)}</span></div>
-        ${m.url ? `<a class="applyBtn" href="${esc(m.url)}" target="_blank" rel="noopener">Apply on source ↗</a>` : ''}
+        ${jobUrl ? `<a class="applyBtn" href="${esc(jobUrl)}" target="_blank" rel="noopener noreferrer">View &amp; apply ↗</a>` : ''}
       </div>
       ${score}
     </div>`;
@@ -558,6 +567,8 @@ async function routeTo(route, updateHash=true){
   };
   document.querySelector('#pageTitle').textContent = titles[route][0];
   document.querySelector('#pageSubtitle').textContent = titles[route][1];
+  document.querySelector('#marketStatus').classList.toggle('hidden',route!=='dashboard');
+  document.querySelector('#refreshDashboard').classList.toggle('hidden',route!=='dashboard');
 
   if(route==='dashboard'){
     dash.classList.remove('hidden'); page.classList.add('hidden');
@@ -588,36 +599,55 @@ async function routeTo(route, updateHash=true){
   if(route==='settings') return renderSettingsPage();
 }
 
+function publicJobUrl(value){
+  try {
+    const parsed = new URL(value || '');
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+  } catch (_) { return ''; }
+}
+
 function jobCard(job, compact){
   const score = job.match == null ? '—' : Math.round(job.match) + '%';
+  const jobUrl = publicJobUrl(job.url);
   const skills = (job.matched_skills && job.matched_skills.length ? job.matched_skills : job.skills || []).slice(0,6);
+  const skillLabel = job.matched_skills && job.matched_skills.length ? 'Matched in CV' : 'Skills in job';
   const missing = (job.missing_skills || []).slice(0,4);
   const breakdown = job.score_breakdown || {};
+  const requirements = job.requirements || {};
+  const requiredSkillsKnown = (requirements.required_skills || []).length > 0;
+  const yearsKnown = requirements.years_required != null;
+  const languageKnown = (requirements.languages || []).some(function(item){return item.required;});
+  function measured(value,known){return known && value != null ? Math.round(value)+'%' : 'Not specified';}
   const breakdownHtml = !compact && Object.keys(breakdown).length
-    ? '<div class="matchBreakdownMini"><span>Role ' + Math.round(breakdown.role_alignment || 0) + '%</span><span>Required skills ' + Math.round(breakdown.required_skills || 0) + '%</span><span>Experience ' + Math.round(breakdown.experience || 0) + '%</span><span>Language ' + Math.round(breakdown.language || 0) + '%</span></div>'
+    ? '<div class="matchBreakdownMini"><span>Role ' + measured(breakdown.role_alignment,true) + '</span><span>Required skills ' + measured(breakdown.required_skills,requiredSkillsKnown) + '</span><span>Experience ' + measured(breakdown.experience,yearsKnown) + '</span><span>Language ' + measured(breakdown.language,languageKnown) + '</span></div>'
     : '';
   return '<article class="marketJob card">' +
     '<div class="marketJobTop"><div><span class="sourceTag">' + esc(job.source) + '</span>' +
     '<h3>' + esc(job.title) + '</h3><p>' + esc(job.company) + ' · ' + esc(job.location) + '</p></div>' +
-    '<div class="scoreBadge">' + score + '<small>CV overlap</small></div></div>' +
-    '<div class="tagRow">' + skills.map(function(s){return '<span class="tag">' + esc(s) + '</span>';}).join('') + '</div>' +
-    (job.cv_used_filename ? '<p class="muted">Scored using saved CV: '+esc(job.cv_used_filename)+' · CV overlap is not an interview prediction.</p>' : '') +
+    '<div class="scoreBadge" title="Estimated CV match, not a prediction of an interview">' + score + '<small>CV match</small></div></div>' +
+    (skills.length ? '<div class="tagRow"><span class="jobSkillLabel">'+skillLabel+'</span>' + skills.map(function(s){return '<span class="tag">' + esc(s) + '</span>';}).join('') + '</div>' : '') +
     (job.opportunity ? '<p class="opportunityLine"><b>Opportunity '+Math.round(job.opportunity.score)+'/100</b> · '+esc(job.opportunity.decision)+' · '+esc(job.opportunity.track)+(job.opportunity.age_days!=null?' · '+job.opportunity.age_days+'d old':'')+'</p>' : '') +
-    (job.opportunity&&job.opportunity.eligibility?'<p class="eligibilityLine"><b>Eligibility:</b> '+esc(job.opportunity.eligibility.status)+' · '+esc(job.opportunity.eligibility.seniority)+' · '+esc(job.opportunity.eligibility.employment_type)+'</p>'+((job.opportunity.eligibility.needs_confirmation||[]).length?'<p class="muted">Verify: '+job.opportunity.eligibility.needs_confirmation.map(esc).join('; ')+'</p>':''):'') +
-    breakdownHtml +
-    (!compact && missing.length ? '<p class="missingLine"><b>Missing:</b> ' + missing.map(esc).join(', ') + '</p>' : '') +
+    (job.opportunity&&job.opportunity.eligibility&&(job.opportunity.eligibility.needs_confirmation||[]).length?'<p class="eligibilityWarning"><b>Verify:</b> '+job.opportunity.eligibility.needs_confirmation.map(esc).join('; ')+'</p>':'') +
+    (!compact && missing.length ? '<p class="missingLine"><b>Not found in CV:</b> ' + missing.map(esc).join(', ') + '</p>' : '') +
     (!compact && job.hard_blockers && job.hard_blockers.length ? '<p class="blockerLine"><b>Review:</b> ' + job.hard_blockers.map(esc).join(' ') + '</p>' : '') +
     '<div class="jobActions">' +
-      (job.url ? '<a class="primaryLink" target="_blank" rel="noopener" href="' + esc(job.url) + '">Apply on source ↗</a>' : '') +
-      '<button class="secondary coverLetterBtn" data-job-id="' + job.id + '">Create cover letter</button>' +
-      '<button class="secondary tailorCvBtn" data-job-id="' + job.id + '">Tailor CV</button>' +
-      '<button class="secondary applicationQualityBtn" data-job-id="' + job.id + '">Pre-Apply Check</button>' +
-      '<button class="primary guidedApplyBtn" data-job-id="' + job.id + '">Assisted Apply</button>' +
-      '<button class="secondary atsReviewBtn" data-job-id="' + job.id + '">ATS Review</button>' +
-      '<button class="secondary startPracticeBtn" data-job-id="' + job.id + '">Interview Prep</button>' +
-      '<button class="secondary prepareApplicationBtn" data-job-id="' + job.id + '">Prepare application</button>' +
-      '<button class="secondary trackJob" data-job-id="' + job.id + '">Track application</button>' +
-    '</div></article>';
+      (jobUrl ? '<a class="primaryLink" target="_blank" rel="noopener noreferrer" href="' + esc(jobUrl) + '">View &amp; apply ↗</a>' : '<span class="jobLinkUnavailable">Source link unavailable</span>') +
+      '<button type="button" class="secondary tailorCvBtn" data-job-id="' + esc(job.id) + '">Tailor CV</button>' +
+      (jobUrl ? '<button type="button" class="secondary guidedApplyBtn" data-job-id="' + esc(job.id) + '">Assisted apply</button>' : '') +
+    '</div>' +
+    '<details class="jobMore"><summary>More actions &amp; match details</summary>' +
+      '<div class="jobMoreContent"><div class="jobSecondaryActions">' +
+        '<button type="button" class="secondary coverLetterBtn" data-job-id="' + esc(job.id) + '">Create cover letter</button>' +
+        '<button type="button" class="secondary applicationQualityBtn" data-job-id="' + esc(job.id) + '">Pre-Apply Check</button>' +
+        '<button type="button" class="secondary atsReviewBtn" data-job-id="' + esc(job.id) + '">ATS Review</button>' +
+        '<button type="button" class="secondary startPracticeBtn" data-job-id="' + esc(job.id) + '">Interview Prep</button>' +
+        '<button type="button" class="secondary prepareApplicationBtn" data-job-id="' + esc(job.id) + '">Prepare application</button>' +
+        '<button type="button" class="secondary trackJob" data-job-id="' + esc(job.id) + '">Save / track job</button>' +
+      '</div>' +
+      (job.cv_used_filename ? '<p class="muted">Scored using saved CV: '+esc(job.cv_used_filename)+'. This estimate is not an interview prediction.</p>' : '') +
+      (job.opportunity&&job.opportunity.eligibility?'<p class="eligibilityLine"><b>Eligibility:</b> '+esc(job.opportunity.eligibility.status)+' · '+esc(job.opportunity.eligibility.seniority)+' · '+esc(job.opportunity.eligibility.employment_type)+'</p>':'') +
+      breakdownHtml +
+      '</div></details></article>';
 }
 
 function bindTrackButtons(){
@@ -1046,24 +1076,38 @@ async function startGmailSendAuthorization(){
   }
 }
 
+function filterActionJobs(jobs, query, selectedDecision){
+  const q=String(query || '').trim().toLowerCase();
+  return jobs.filter(function(job){
+    const text=[job.title,job.company,job.location,(job.skills||[]).join(' ')].join(' ').toLowerCase();
+    return (!q || text.includes(q)) && (!selectedDecision || (job.opportunity||{}).decision===selectedDecision);
+  });
+}
+
 async function renderActionCenter(){
   const results=await Promise.all([
-    apiFetch('/api/action-center'),
+    apiFetch('/api/action-center?limit=100'),
     apiFetch('/api/gmail/status').catch(function(){return {connected:false,can_send:false};})
   ]);
   const action=results[0],gmail=results[1];
   const page=document.querySelector('#pageContent');
-  jobMarketCache=(action.opportunities||[]).map(function(row){return row.job;});
+  jobMarketCache=(action.opportunities||[]).map(function(row){
+    return Object.assign({},row.job,{opportunity:row.opportunity || row.job.opportunity});
+  });
+  const totalRanked=Number(action.apply_now || 0)+Number(action.review || 0);
   page.innerHTML='<div class="pageIntro"><h2>Today’s Job Action Queue</h2>' +
-    '<p>Apply to strong engineering matches. Every browser-assisted submission needs your approval.</p></div>' +
-    '<div class="analyticsSummary">' +
+    '<p>Review the employer and requirements before applying. CV match is an estimate, not an interview prediction.</p></div>' +
+    '<div class="analyticsSummary actionSummary">' +
     '<div class="card analyticsMini"><small>Apply Now</small><b>'+action.apply_now+'</b></div>' +
     '<div class="card analyticsMini"><small>Review</small><b>'+action.review+'</b></div>' +
     '<div class="card analyticsMini"><small>Follow-ups due</small><b>'+action.followups.length+'</b></div></div>' +
     (!action.cv_uploaded?'<div class="card detailPage"><h3>Upload your CV first</h3><p>Opportunity ranking needs evidence from your CV.</p></div>':'') +
-    '<div class="pageIntro"><h3>Best current opportunities</h3></div>' +
-    '<div class="jobMarketGrid">'+(jobMarketCache.map(function(job){return jobCard(job,false);}).join('')||empty('No strong matching openings in the current feed. Refresh jobs or add employer ATS collectors.'))+'</div>' +
-    '<div class="pageIntro"><h3>Recruiter follow-up assistant</h3><p>JobIntel checks your connected Gmail automatically when follow-ups are due. It displays the source of every suggested address. Review the recipient and message before sending.</p></div>' +
+    '<div class="actionQueueHeader"><div><h3>Best current opportunities</h3><p>Showing up to 100 ranked recommendations.</p></div>' +
+      '<div class="actionQueueFilters"><label>Search jobs<input id="actionJobSearch" type="search" placeholder="Title, company, location or skill"></label>' +
+      '<label>Decision<select id="actionDecision"><option value="">All decisions</option><option value="Apply Now">Apply now</option><option value="Review">Review</option></select></label></div></div>' +
+    '<p id="actionQueueCount" class="resultCount" role="status" aria-live="polite"></p>' +
+    '<div id="actionJobGrid" class="jobMarketGrid"></div><button id="actionShowMore" class="secondary actionShowMore hidden" type="button">Show more jobs</button>' +
+    '<div class="pageIntro followupIntro"><h3>Recruiter follow-up assistant</h3><p>JobIntel checks your connected Gmail automatically when follow-ups are due. It displays the source of every suggested address. Review the recipient and message before sending.</p></div>' +
     '<div class="followupGrid">'+(action.followups.map(function(row){
       return '<article class="card followupCard" data-app-id="'+row.application_id+'">'+
         '<h3>'+esc(row.role)+'</h3><p>'+esc(row.company)+' · '+row.days_waiting+' days waiting</p>'+
@@ -1073,15 +1117,33 @@ async function renderActionCenter(){
         '<label>Email subject<input class="followupSubject" value="'+esc(row.subject)+'"></label>'+
         '<label>Editable email draft<textarea class="followupBody" rows="9">'+esc(row.body)+'</textarea></label>'+
         '<div class="prepActions">'+
-        '<button type="button" class="secondary followupCopy">Copy draft</button>'+
         '<button type="button" class="primary followupSend"'+(gmail.can_send?'':' hidden')+'>Review & Send via Gmail</button>'+
         '<button type="button" class="secondary followupEnableGmail"'+(gmail.can_send?' hidden':'')+'>Enable Gmail sending</button>'+
+        '</div><details class="followupMore"><summary>More follow-up options</summary><div class="prepActions">'+
+        '<button type="button" class="secondary followupCopy">Copy draft</button>'+
         '<button type="button" class="secondary followupRecheckGmail"'+(gmail.can_send?' hidden':'')+'>Check Gmail Permission</button>'+
-        '<button type="button" class="secondary followupSent">I sent this externally</button></div>'+
+        '<button type="button" class="secondary followupSent">I sent this externally</button></div></details>'+
         '<small>'+(gmail.can_send?'Gmail send is authorized; no email is sent without clicking Review & Send.':'Gmail read-only remains available; enable Send separately in Settings.')+'</small>'+
         '</article>';
     }).join('')||empty('No follow-ups are due right now.'))+'</div>';
-  bindTrackButtons();
+  let shown=12;
+  const search=page.querySelector('#actionJobSearch');
+  const decision=page.querySelector('#actionDecision');
+  const more=page.querySelector('#actionShowMore');
+  function drawQueue(){
+    const rows=filterActionJobs(jobMarketCache,search.value,decision.value);
+    const visible=rows.slice(0,shown);
+    page.querySelector('#actionJobGrid').innerHTML=visible.map(function(job){return jobCard(job,false);}).join('') ||
+      empty(jobMarketCache.length ? 'No jobs match these filters.' : 'No recommended jobs in the current feed. Refresh jobs or add employer sources.');
+    page.querySelector('#actionQueueCount').textContent='Showing '+visible.length+' of '+rows.length+' filtered jobs'+
+      (totalRanked>jobMarketCache.length?' · '+jobMarketCache.length+' of '+totalRanked+' recommendations loaded':'');
+    more.classList.toggle('hidden',visible.length>=rows.length);
+    bindTrackButtons();
+  }
+  search.oninput=function(){shown=12;drawQueue();};
+  decision.onchange=function(){shown=12;drawQueue();};
+  more.onclick=function(){shown+=12;drawQueue();};
+  drawQueue();
   function renderContactOptions(card, lookup){
     const target=card.querySelector('.followupContactResults');
     const status=card.querySelector('.followupLookupStatus');
